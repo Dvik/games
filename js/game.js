@@ -190,8 +190,34 @@ function reload() {
 // Spawn enemies at random positions
 function spawnEnemies(count) {
     for (let i = 0; i < count; i++) {
-        const x = (Math.random() - 0.5) * 40;
-        const z = (Math.random() - 0.5) * 40;
+        // Find a position that doesn't collide with existing enemies
+        let validPosition = false;
+        let x, z;
+        let attempts = 0;
+        const maxAttempts = 10;
+
+        while (!validPosition && attempts < maxAttempts) {
+            x = (Math.random() - 0.5) * 40;
+            z = (Math.random() - 0.5) * 40;
+
+            // Check if this position is far enough from other enemies
+            validPosition = true;
+            for (const enemy of state.enemies) {
+                const dist = Math.sqrt(
+                    Math.pow(x - enemy.mesh.position.x, 2) +
+                    Math.pow(z - enemy.mesh.position.z, 2)
+                );
+
+                if (dist < 3) { // Minimum distance between enemies
+                    validPosition = false;
+                    break;
+                }
+            }
+
+            attempts++;
+        }
+
+        // If we couldn't find a valid position after max attempts, just use the last one
         const enemy = new Enemy(new THREE.Vector3(x, 0, z), scene);
         state.enemies.push(enemy);
     }
@@ -261,7 +287,8 @@ function animate() {
 
         // Update enemies
         state.enemies.forEach(enemy => {
-            enemy.update(delta, camera.position);
+            // Pass the array of all enemies to the update method
+            enemy.update(delta, camera.position, state.enemies);
 
             // Check if enemy is close to player
             if (enemy.mesh.position.distanceTo(camera.position) < 1.5) {
