@@ -15,6 +15,7 @@ export class Enemy {
 
         // Store a reference to this enemy on the mesh for collision detection
         this.mesh.userData.parent = this;
+        this.mesh.userData.type = 'enemy';
 
         // Add mesh to scene
         scene.add(this.mesh);
@@ -22,6 +23,7 @@ export class Enemy {
         // Movement properties
         this.moveDirection = new THREE.Vector3();
         this.tempVector = new THREE.Vector3();
+        this.previousPosition = new THREE.Vector3();
 
         // Path finding variables
         this.pathUpdateTime = 0;
@@ -36,7 +38,10 @@ export class Enemy {
         this.avoidanceRadius = 2.5; // Distance to start avoiding other enemies
     }
 
-    update(delta, playerPosition, otherEnemies) {
+    update(delta, playerPosition, otherEnemies, obstacles) {
+        // Store previous position for collision resolution
+        this.previousPosition.copy(this.mesh.position);
+
         // Path finding update (simplified)
         this.pathUpdateTime += delta;
 
@@ -64,9 +69,33 @@ export class Enemy {
             this.mesh.position.x += this.tempVector.x;
             this.mesh.position.z += this.tempVector.z;
 
+            // Check for collisions with obstacles
+            if (obstacles && this.checkObstacleCollisions(obstacles)) {
+                // If collision with obstacle, revert to previous position
+                this.mesh.position.copy(this.previousPosition);
+            }
+
             // Face towards player
             this.mesh.lookAt(playerPosition.x, this.mesh.position.y, playerPosition.z);
         }
+    }
+
+    checkObstacleCollisions(obstacles) {
+        // Create enemy bounding box
+        const enemyBox = new THREE.Box3().setFromObject(this.mesh);
+
+        // Check collision with each obstacle
+        for (const obstacle of obstacles) {
+            if (!obstacle.mesh) continue;
+
+            const obstacleBox = new THREE.Box3().setFromObject(obstacle.mesh);
+
+            if (enemyBox.intersectsBox(obstacleBox)) {
+                return true; // Collision detected
+            }
+        }
+
+        return false; // No collision
     }
 
     updatePath(playerPosition, otherEnemies) {

@@ -1,4 +1,10 @@
+// Array to store all obstacles for collision detection
+const obstacles = [];
+
 export function createMap(scene) {
+    // Clear existing obstacles
+    obstacles.length = 0;
+
     // Create ground
     createGround(scene);
 
@@ -10,6 +16,9 @@ export function createMap(scene) {
 
     // Create sky
     createSky(scene);
+
+    // Return obstacles array for collision detection
+    return obstacles;
 }
 
 function createGround(scene) {
@@ -47,12 +56,26 @@ function createWalls(scene) {
     northWall.position.set(0, wallHeight / 2, -mapSize / 2 - wallThickness / 2);
     northWall.castShadow = true;
     northWall.receiveShadow = true;
+    northWall.userData.type = 'wall';
     scene.add(northWall);
+
+    // Add to obstacles array
+    obstacles.push({
+        mesh: northWall,
+        type: 'wall'
+    });
 
     // South wall
     const southWall = northWall.clone();
     southWall.position.z = mapSize / 2 + wallThickness / 2;
+    southWall.userData.type = 'wall';
     scene.add(southWall);
+
+    // Add to obstacles array
+    obstacles.push({
+        mesh: southWall,
+        type: 'wall'
+    });
 
     // East wall
     const eastWallGeometry = new THREE.BoxGeometry(wallThickness, wallHeight, mapSize);
@@ -60,12 +83,26 @@ function createWalls(scene) {
     eastWall.position.set(mapSize / 2 + wallThickness / 2, wallHeight / 2, 0);
     eastWall.castShadow = true;
     eastWall.receiveShadow = true;
+    eastWall.userData.type = 'wall';
     scene.add(eastWall);
+
+    // Add to obstacles array
+    obstacles.push({
+        mesh: eastWall,
+        type: 'wall'
+    });
 
     // West wall
     const westWall = eastWall.clone();
     westWall.position.x = -mapSize / 2 - wallThickness / 2;
+    westWall.userData.type = 'wall';
     scene.add(westWall);
+
+    // Add to obstacles array
+    obstacles.push({
+        mesh: westWall,
+        type: 'wall'
+    });
 }
 
 function createObstacles(scene) {
@@ -97,8 +134,15 @@ function createObstacles(scene) {
         crate.position.set(position.x, position.y, position.z);
         crate.castShadow = true;
         crate.receiveShadow = true;
+        crate.userData.type = 'obstacle';
 
         scene.add(crate);
+
+        // Add to obstacles array
+        obstacles.push({
+            mesh: crate,
+            type: 'obstacle'
+        });
     });
 
     // Create some barriers
@@ -122,8 +166,15 @@ function createObstacles(scene) {
         barrier.position.set(position.x, position.y, position.z);
         barrier.castShadow = true;
         barrier.receiveShadow = true;
+        barrier.userData.type = 'barrier';
 
         scene.add(barrier);
+
+        // Add to obstacles array
+        obstacles.push({
+            mesh: barrier,
+            type: 'barrier'
+        });
     });
 
     // Add some taller structures
@@ -145,8 +196,15 @@ function createObstacles(scene) {
         tower.position.set(position.x, position.y, position.z);
         tower.castShadow = true;
         tower.receiveShadow = true;
+        tower.userData.type = 'tower';
 
         scene.add(tower);
+
+        // Add to obstacles array
+        obstacles.push({
+            mesh: tower,
+            type: 'tower'
+        });
     });
 }
 

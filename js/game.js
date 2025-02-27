@@ -11,7 +11,8 @@ const state = {
     ammo: 30,
     score: 0,
     enemies: [],
-    bullets: []
+    bullets: [],
+    obstacles: [] // Array to store map obstacles
 };
 
 // Three.js setup
@@ -56,8 +57,8 @@ function init() {
     directionalLight.castShadow = true;
     scene.add(directionalLight);
 
-    // Create the map
-    createMap(scene);
+    // Create the map and get obstacles
+    state.obstacles = createMap(scene);
 
     // Create player
     player = new Player(camera, controls, scene);
@@ -190,18 +191,27 @@ function reload() {
 // Spawn enemies at random positions
 function spawnEnemies(count) {
     for (let i = 0; i < count; i++) {
-        // Find a position that doesn't collide with existing enemies
+        // Find a position that doesn't collide with existing enemies or obstacles
         let validPosition = false;
         let x, z;
         let attempts = 0;
-        const maxAttempts = 10;
+        const maxAttempts = 20;
 
         while (!validPosition && attempts < maxAttempts) {
             x = (Math.random() - 0.5) * 40;
             z = (Math.random() - 0.5) * 40;
 
+            // Create a temporary box for collision testing
+            const testBox = new THREE.Box3();
+            testBox.setFromCenterAndSize(
+                new THREE.Vector3(x, 1, z),
+                new THREE.Vector3(1, 2, 1) // Enemy size
+            );
+
             // Check if this position is far enough from other enemies
             validPosition = true;
+
+            // Check collision with other enemies
             for (const enemy of state.enemies) {
                 const dist = Math.sqrt(
                     Math.pow(x - enemy.mesh.position.x, 2) +
@@ -211,6 +221,20 @@ function spawnEnemies(count) {
                 if (dist < 3) { // Minimum distance between enemies
                     validPosition = false;
                     break;
+                }
+            }
+
+            // Check collision with obstacles
+            if (validPosition) {
+                for (const obstacle of state.obstacles) {
+                    if (!obstacle.mesh) continue;
+
+                    const obstacleBox = new THREE.Box3().setFromObject(obstacle.mesh);
+
+                    if (testBox.intersectsBox(obstacleBox)) {
+                        validPosition = false;
+                        break;
+                    }
                 }
             }
 
@@ -228,11 +252,22 @@ function checkEnemyHits() {
     const raycaster = new THREE.Raycaster();
     raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
 
-    const enemyMeshes = state.enemies.map(enemy => enemy.mesh);
-    const intersects = raycaster.intersectObjects(enemyMeshes);
+    // First check for obstacle hits (so bullets don't go through walls)
+    const obstacleObjects = state.obstacles.map(obstacle => obstacle.mesh);
+    const obstacleIntersects = raycaster.intersectObjects(obstacleObjects);
 
-    if (intersects.length > 0) {
-        const hitEnemy = state.enemies.find(enemy => enemy.mesh === intersects[0].object);
+    if (obstacleIntersects.length > 0) {
+        // If hit an obstacle first, create impact effect but don't check for enemy hits
+        weapon.createBulletImpact(obstacleIntersects[0].point);
+        return;
+    }
+
+    // Check for enemy hits
+    const enemyMeshes = state.enemies.map(enemy => enemy.mesh);
+    const enemyIntersects = raycaster.intersectObjects(enemyMeshes);
+
+    if (enemyIntersects.length > 0) {
+        const hitEnemy = state.enemies.find(enemy => enemy.mesh === enemyIntersects[0].object);
         if (hitEnemy) {
             // Remove enemy from scene
             scene.remove(hitEnemy.mesh);
@@ -285,10 +320,41 @@ function animate() {
         // Update player
         player.update(delta);
 
+        // Store player's previous position for collisions
+        const previousPlayerPos = camera.position.clone();
+
+        // Update player based on user input
+        if (player.moveForward || player.moveBackward || player.moveLeft || player.moveRight) {
+            // Check for collisions with obstacles after player movement
+            const playerBox = new THREE.Box3();
+            playerBox.setFromCenterAndSize(
+                camera.position,
+                new THREE.Vector3(0.5, 1.6, 0.5) // Player size
+            );
+
+            // Check collision with obstacles
+            let obstacleCollision = false;
+            for (const obstacle of state.obstacles) {
+                if (!obstacle.mesh) continue;
+
+                const obstacleBox = new THREE.Box3().setFromObject(obstacle.mesh);
+
+                if (playerBox.intersectsBox(obstacleBox)) {
+                    obstacleCollision = true;
+                    break;
+                }
+            }
+
+            // If collision detected, revert to previous position
+            if (obstacleCollision) {
+                camera.position.copy(previousPlayerPos);
+            }
+        }
+
         // Update enemies
         state.enemies.forEach(enemy => {
-            // Pass the array of all enemies to the update method
-            enemy.update(delta, camera.position, state.enemies);
+            // Pass the array of all enemies and obstacles to the update method
+            enemy.update(delta, camera.position, state.enemies, state.obstacles);
 
             // Check if enemy is close to player
             if (enemy.mesh.position.distanceTo(camera.position) < 1.5) {

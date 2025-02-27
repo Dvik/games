@@ -59,8 +59,8 @@ export class Weapon {
         // Create bullet trail
         this.createBulletTrail();
 
-        // Create bullet impact
-        this.createBulletImpact();
+        // The impact will be created by the game.js checkEnemyHits function
+        // as it needs to check for both obstacles and enemies
     }
 
     showMuzzleFlash() {
@@ -108,38 +108,48 @@ export class Weapon {
         }, 100);
     }
 
-    createBulletImpact() {
-        // Create raycaster for bullet impact
-        const raycaster = new THREE.Raycaster();
-        raycaster.setFromCamera(new THREE.Vector2(0, 0), this.camera);
+    // Updated to accept a direct impact point or use raycasting if not provided
+    createBulletImpact(impactPoint) {
+        let impactPosition;
 
-        // Check for intersections with scene objects
-        const intersects = raycaster.intersectObjects(this.scene.children, true);
+        if (impactPoint) {
+            // Use the provided impact point
+            impactPosition = impactPoint;
+        } else {
+            // Use raycasting to find impact point
+            const raycaster = new THREE.Raycaster();
+            raycaster.setFromCamera(new THREE.Vector2(0, 0), this.camera);
 
-        if (intersects.length > 0) {
-            // Create impact point
-            const impactPosition = intersects[0].point;
+            // Check for intersections with scene objects
+            const intersects = raycaster.intersectObjects(this.scene.children, true);
 
-            // Create impact marker (small sphere)
-            const geometry = new THREE.SphereGeometry(0.05, 8, 8);
-            const material = new THREE.MeshBasicMaterial({ color: 0x333333 });
-            const impact = new THREE.Mesh(geometry, material);
-
-            impact.position.copy(impactPosition);
-            this.scene.add(impact);
-
-            // Add to impacts array
-            this.impacts.push(impact);
-
-            // Remove after a few seconds
-            setTimeout(() => {
-                this.scene.remove(impact);
-                const index = this.impacts.indexOf(impact);
-                if (index !== -1) {
-                    this.impacts.splice(index, 1);
-                }
-            }, 3000);
+            if (intersects.length > 0) {
+                impactPosition = intersects[0].point;
+            } else {
+                // No impact found
+                return;
+            }
         }
+
+        // Create impact marker (small sphere)
+        const geometry = new THREE.SphereGeometry(0.05, 8, 8);
+        const material = new THREE.MeshBasicMaterial({ color: 0x333333 });
+        const impact = new THREE.Mesh(geometry, material);
+
+        impact.position.copy(impactPosition);
+        this.scene.add(impact);
+
+        // Add to impacts array
+        this.impacts.push(impact);
+
+        // Remove after a few seconds
+        setTimeout(() => {
+            this.scene.remove(impact);
+            const index = this.impacts.indexOf(impact);
+            if (index !== -1) {
+                this.impacts.splice(index, 1);
+            }
+        }, 3000);
     }
 
     reload() {
