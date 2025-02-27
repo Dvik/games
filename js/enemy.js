@@ -3,6 +3,7 @@ export class Enemy {
         this.scene = scene;
         this.speed = 2.0;
         this.health = 100;
+        this.maxHealth = 100; // Store max health for health bar calculation
         this.type = 'enemy'; // Add type identifier
 
         // Create enemy mesh
@@ -16,6 +17,9 @@ export class Enemy {
         // Store a reference to this enemy on the mesh for collision detection
         this.mesh.userData.parent = this;
         this.mesh.userData.type = 'enemy';
+
+        // Create health bar
+        this.createHealthBar();
 
         // Add mesh to scene
         scene.add(this.mesh);
@@ -58,7 +62,41 @@ export class Enemy {
         this.muzzleFlash.visible = false;
     }
 
+    createHealthBar() {
+        // Create a container for the health bar that will always face the camera
+        this.healthBarContainer = new THREE.Object3D();
+        this.healthBarContainer.position.set(0, 2.2, 0); // Position above enemy
+        this.mesh.add(this.healthBarContainer);
+
+        // Create health bar background (black)
+        const backgroundGeometry = new THREE.PlaneGeometry(1.2, 0.2);
+        const backgroundMaterial = new THREE.MeshBasicMaterial({
+            color: 0x000000,
+            side: THREE.DoubleSide,
+            depthTest: false
+        });
+        this.healthBarBackground = new THREE.Mesh(backgroundGeometry, backgroundMaterial);
+        this.healthBarContainer.add(this.healthBarBackground);
+
+        // Create health bar foreground (green/red gradient)
+        const foregroundGeometry = new THREE.PlaneGeometry(1.2, 0.2);
+        const foregroundMaterial = new THREE.MeshBasicMaterial({
+            color: 0x00ff00,
+            side: THREE.DoubleSide,
+            depthTest: false
+        });
+        this.healthBarForeground = new THREE.Mesh(foregroundGeometry, foregroundMaterial);
+        this.healthBarForeground.scale.set(1, 1, 1); // Will be scaled based on health
+        this.healthBarForeground.position.set(0, 0, 0.01); // Slightly in front of background
+        this.healthBarContainer.add(this.healthBarForeground);
+    }
+
     update(delta, playerPosition, otherEnemies, obstacles) {
+        // Make health bar face camera
+        if (this.healthBarContainer) {
+            this.healthBarContainer.lookAt(playerPosition);
+        }
+
         // Store previous position for collision resolution
         this.previousPosition.copy(this.mesh.position);
 
@@ -111,6 +149,26 @@ export class Enemy {
         // Try to shoot at player if in range and cooldown finished
         if (this.canShoot && distanceToPlayer < this.shootRange) {
             this.tryShootAtPlayer(playerPosition, obstacles);
+        }
+    }
+
+    updateHealthBar() {
+        if (this.healthBarForeground) {
+            // Scale health bar based on current health percentage
+            const healthPercent = this.health / this.maxHealth;
+            this.healthBarForeground.scale.x = Math.max(0, healthPercent);
+
+            // Center the scaled health bar (since scaling happens from center)
+            this.healthBarForeground.position.x = (healthPercent - 1) * 0.6;
+
+            // Change color based on health level
+            if (healthPercent < 0.3) {
+                this.healthBarForeground.material.color.setHex(0xff0000); // Red
+            } else if (healthPercent < 0.6) {
+                this.healthBarForeground.material.color.setHex(0xffff00); // Yellow
+            } else {
+                this.healthBarForeground.material.color.setHex(0x00ff00); // Green
+            }
         }
     }
 
@@ -295,7 +353,10 @@ export class Enemy {
     takeDamage(amount) {
         this.health -= amount;
 
-        // Flash red when hit
+        // Update health bar
+        this.updateHealthBar();
+
+        // Flash white when hit
         const originalColor = this.mesh.material.color.clone();
         this.mesh.material.color.set(0xffffff);
 

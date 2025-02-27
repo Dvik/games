@@ -14,7 +14,8 @@ const state = {
     bullets: [],
     obstacles: [], // Array to store map obstacles
     damageCooldown: false, // Cooldown for taking damage (to prevent rapid damage)
-    damageFlashTime: 0 // Time for damage flash effect
+    damageFlashTime: 0, // Time for damage flash effect
+    playerDamage: 100 // Increased damage amount to kill in one shot
 };
 
 // Three.js setup
@@ -225,8 +226,10 @@ function onMouseDown(event) {
         // Check for enemy hits
         checkEnemyHits();
     } else {
-        // Click sound when out of ammo
-        console.log("Out of ammo");
+        // Visual feedback when out of ammo
+        showReloadMessage();
+        // Make ammo count flash red
+        flashAmmoCount();
     }
 }
 
@@ -235,8 +238,104 @@ function reload() {
     if (state.ammo < 30) {
         state.ammo = 30;
         updateHUD();
-        console.log("Reloaded");
+
+        // Remove the reload message if it exists
+        const reloadMsg = document.getElementById('reload-message');
+        if (reloadMsg) {
+            reloadMsg.remove();
+        }
+
+        // Show reload confirmation
+        showReloadConfirmation();
     }
+}
+
+// Show a message prompting player to reload
+function showReloadMessage() {
+    // Don't show multiple messages
+    if (document.getElementById('reload-message')) return;
+
+    const reloadMessage = document.createElement('div');
+    reloadMessage.id = 'reload-message';
+    reloadMessage.style.position = 'absolute';
+    reloadMessage.style.bottom = '120px';
+    reloadMessage.style.right = '20px';
+    reloadMessage.style.color = '#ff3300';
+    reloadMessage.style.fontWeight = 'bold';
+    reloadMessage.style.fontSize = '24px';
+    reloadMessage.style.textShadow = '2px 2px 4px black';
+    reloadMessage.style.padding = '10px';
+    reloadMessage.style.borderRadius = '5px';
+    reloadMessage.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
+    reloadMessage.style.animation = 'pulse 1s infinite';
+    reloadMessage.textContent = 'OUT OF AMMO - Press R to Reload';
+    hudElement.appendChild(reloadMessage);
+
+    // Add the pulse animation
+    const style = document.createElement('style');
+    style.textContent = `
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+    `;
+    document.head.appendChild(style);
+}
+
+// Make the ammo count flash red when empty
+function flashAmmoCount() {
+    const ammoElement = document.getElementById('ammo-count');
+    ammoElement.style.color = '#ff0000';
+    ammoElement.style.animation = 'ammo-flash 0.5s infinite';
+
+    // Add the flash animation if not already added
+    if (!document.getElementById('ammo-flash-style')) {
+        const style = document.createElement('style');
+        style.id = 'ammo-flash-style';
+        style.textContent = `
+            @keyframes ammo-flash {
+                0% { color: #ff0000; }
+                50% { color: #ffffff; }
+                100% { color: #ff0000; }
+            }
+        `;
+        document.head.appendChild(style);
+    }
+}
+
+// Show a brief reload confirmation message
+function showReloadConfirmation() {
+    const reloadConfirm = document.createElement('div');
+    reloadConfirm.style.position = 'absolute';
+    reloadConfirm.style.bottom = '120px';
+    reloadConfirm.style.right = '20px';
+    reloadConfirm.style.color = '#33cc33';
+    reloadConfirm.style.fontWeight = 'bold';
+    reloadConfirm.style.fontSize = '24px';
+    reloadConfirm.style.textShadow = '2px 2px 4px black';
+    reloadConfirm.style.padding = '10px';
+    reloadConfirm.style.borderRadius = '5px';
+    reloadConfirm.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
+    reloadConfirm.style.opacity = '1';
+    reloadConfirm.style.transition = 'opacity 0.5s ease-out';
+    reloadConfirm.textContent = 'RELOADED';
+    hudElement.appendChild(reloadConfirm);
+
+    // Reset the ammo count color and animation
+    const ammoElement = document.getElementById('ammo-count');
+    ammoElement.style.color = '';
+    ammoElement.style.animation = '';
+
+    // Fade out and remove the message
+    setTimeout(() => {
+        reloadConfirm.style.opacity = '0';
+        setTimeout(() => {
+            if (reloadConfirm.parentNode) {
+                reloadConfirm.parentNode.removeChild(reloadConfirm);
+            }
+        }, 500);
+    }, 1000);
 }
 
 // Spawn enemies at random positions
@@ -320,22 +419,62 @@ function checkEnemyHits() {
     if (enemyIntersects.length > 0) {
         const hitEnemy = state.enemies.find(enemy => enemy.mesh === enemyIntersects[0].object);
         if (hitEnemy) {
-            // Remove enemy from scene
-            scene.remove(hitEnemy.mesh);
+            // Apply damage to enemy - return value is true if enemy is killed
+            const isKilled = hitEnemy.takeDamage(state.playerDamage);
 
-            // Remove enemy from array
-            const index = state.enemies.indexOf(hitEnemy);
-            state.enemies.splice(index, 1);
+            // Create impact effect at hit point
+            weapon.createBulletImpact(enemyIntersects[0].point);
 
-            // Increase score
-            state.score += 10;
+            // Only remove enemy if it's killed
+            if (isKilled) {
+                // Remove enemy from scene
+                scene.remove(hitEnemy.mesh);
 
-            // Spawn new enemy after a short delay
-            setTimeout(() => {
-                spawnEnemies(1);
-            }, 2000);
+                // Remove enemy from array
+                const index = state.enemies.indexOf(hitEnemy);
+                state.enemies.splice(index, 1);
+
+                // Increase score
+                state.score += 10;
+
+                // Display kill message
+                showKillMessage();
+
+                // Spawn new enemy after a short delay
+                setTimeout(() => {
+                    spawnEnemies(1);
+                }, 2000);
+            }
         }
     }
+}
+
+// Show kill message
+function showKillMessage() {
+    // Create and show a temporary "Enemy Killed" message
+    const killMessage = document.createElement('div');
+    killMessage.style.position = 'absolute';
+    killMessage.style.top = '30%';
+    killMessage.style.left = '50%';
+    killMessage.style.transform = 'translate(-50%, -50%)';
+    killMessage.style.color = 'red';
+    killMessage.style.fontWeight = 'bold';
+    killMessage.style.fontSize = '24px';
+    killMessage.style.textShadow = '2px 2px 4px black';
+    killMessage.style.opacity = '1';
+    killMessage.style.transition = 'opacity 0.5s ease-out';
+    killMessage.textContent = 'Enemy Killed!';
+    hudElement.appendChild(killMessage);
+
+    // Fade out and remove the message
+    setTimeout(() => {
+        killMessage.style.opacity = '0';
+        setTimeout(() => {
+            if (killMessage.parentNode) {
+                killMessage.parentNode.removeChild(killMessage);
+            }
+        }, 500);
+    }, 1000);
 }
 
 // Take damage from enemy
@@ -395,6 +534,15 @@ function updateHUD() {
 
     // Update ammo count
     ammoCount.textContent = state.ammo;
+
+    // If ammo is low, change color to yellow
+    if (state.ammo <= 5 && state.ammo > 0) {
+        ammoCount.style.color = '#ffcc00';
+    } else if (state.ammo <= 0) {
+        ammoCount.style.color = '#ff0000';
+    } else {
+        ammoCount.style.color = '';
+    }
 
     // Update health bar color based on health level
     if (state.health < 30) {
