@@ -12,7 +12,9 @@ const state = {
     score: 0,
     enemies: [],
     bullets: [],
-    obstacles: [] // Array to store map obstacles
+    obstacles: [], // Array to store map obstacles
+    damageCooldown: false, // Cooldown for taking damage (to prevent rapid damage)
+    damageFlashTime: 0 // Time for damage flash effect
 };
 
 // Three.js setup
@@ -76,8 +78,52 @@ function init() {
     startButton.addEventListener('click', startGame);
     restartButton.addEventListener('click', restartGame);
 
+    // Enhance HUD with additional CSS
+    enhanceHUD();
+
     // Start animation loop
     animate();
+}
+
+// Enhance the HUD with damage flash effect and better health visualization
+function enhanceHUD() {
+    // Create a damage flash overlay
+    const damageFlash = document.createElement('div');
+    damageFlash.id = 'damage-flash';
+    damageFlash.style.position = 'absolute';
+    damageFlash.style.top = '0';
+    damageFlash.style.left = '0';
+    damageFlash.style.width = '100%';
+    damageFlash.style.height = '100%';
+    damageFlash.style.backgroundColor = 'rgba(255, 0, 0, 0)'; // Start transparent
+    damageFlash.style.pointerEvents = 'none';
+    damageFlash.style.transition = 'background-color 0.1s ease-out';
+    damageFlash.style.zIndex = '5';
+    hudElement.appendChild(damageFlash);
+
+    // Add health text
+    const healthText = document.createElement('div');
+    healthText.id = 'health-text';
+    healthText.style.position = 'absolute';
+    healthText.style.left = '20px';
+    healthText.style.bottom = '50px';
+    healthText.style.color = 'white';
+    healthText.style.fontWeight = 'bold';
+    healthText.style.textShadow = '1px 1px 2px black';
+    healthText.textContent = 'Health: 100';
+    hudElement.appendChild(healthText);
+
+    // Make health bar more visible
+    const healthBar = document.getElementById('health-bar');
+    healthBar.style.border = '2px solid white';
+    healthBar.style.borderRadius = '3px';
+    healthBar.style.overflow = 'hidden';
+
+    const healthValueBar = document.getElementById('health-value');
+    healthValueBar.style.transition = 'width 0.3s ease-out';
+    healthValueBar.style.background = 'linear-gradient(to right, #ff0000, #ff3300)';
+    healthValueBar.style.height = '100%';
+    healthValueBar.style.width = '100%';
 }
 
 // Function to start the game
@@ -88,6 +134,8 @@ function startGame() {
     state.health = 100;
     state.ammo = 30;
     state.score = 0;
+    state.damageCooldown = false;
+    state.damageFlashTime = 0;
 
     // Reset player position
     camera.position.set(0, 1.6, 0);
@@ -98,6 +146,9 @@ function startGame() {
 
     // Spawn initial enemies
     spawnEnemies(5);
+
+    // Update the HUD
+    updateHUD();
 
     // Lock pointer for first-person controls
     controls.lock();
@@ -289,12 +340,38 @@ function checkEnemyHits() {
 
 // Take damage from enemy
 function takeDamage(amount) {
+    // Don't take damage if in cooldown
+    if (state.damageCooldown) return;
+
+    // Apply damage
     state.health -= amount;
+
+    // Show damage flash effect
+    showDamageFlash();
+
+    // Update the HUD
     updateHUD();
 
+    // Set cooldown to prevent rapid damage
+    state.damageCooldown = true;
+    setTimeout(() => {
+        state.damageCooldown = false;
+    }, 300); // 300ms cooldown
+
+    // Check for game over
     if (state.health <= 0) {
         gameOver();
     }
+}
+
+// Show damage flash effect
+function showDamageFlash() {
+    const damageFlash = document.getElementById('damage-flash');
+    damageFlash.style.backgroundColor = 'rgba(255, 0, 0, 0.3)';
+
+    setTimeout(() => {
+        damageFlash.style.backgroundColor = 'rgba(255, 0, 0, 0)';
+    }, 100);
 }
 
 // Game over
@@ -306,8 +383,27 @@ function gameOver() {
 
 // Update the HUD
 function updateHUD() {
-    healthValue.style.width = `${state.health}%`;
+    // Update health bar
+    const healthValueBar = document.getElementById('health-value');
+    healthValueBar.style.width = `${Math.max(0, state.health)}%`;
+
+    // Update health text
+    const healthText = document.getElementById('health-text');
+    if (healthText) {
+        healthText.textContent = `Health: ${Math.max(0, state.health)}`;
+    }
+
+    // Update ammo count
     ammoCount.textContent = state.ammo;
+
+    // Update health bar color based on health level
+    if (state.health < 30) {
+        healthValueBar.style.background = 'linear-gradient(to right, #ff0000, #ff3300)';
+    } else if (state.health < 60) {
+        healthValueBar.style.background = 'linear-gradient(to right, #ff3300, #ffcc00)';
+    } else {
+        healthValueBar.style.background = 'linear-gradient(to right, #66cc00, #33cc33)';
+    }
 }
 
 // Animation loop
@@ -356,7 +452,7 @@ function animate() {
             // Pass the array of all enemies and obstacles to the update method
             enemy.update(delta, camera.position, state.enemies, state.obstacles);
 
-            // Check if enemy is close to player
+            // Check if enemy is close to player (melee damage)
             if (enemy.mesh.position.distanceTo(camera.position) < 1.5) {
                 takeDamage(10);
 
@@ -367,6 +463,15 @@ function animate() {
                     .multiplyScalar(3);
 
                 enemy.mesh.position.add(direction);
+            }
+
+            // Handle enemy shooting at player
+            if (enemy.canShoot && enemy.tryShootAtPlayer(camera.position, state.obstacles)) {
+                // If the enemy successfully shot at the player, apply damage
+                const damage = enemy.shoot(camera.position);
+                if (damage > 0) {
+                    takeDamage(damage);
+                }
             }
         });
     }
