@@ -1,4 +1,4 @@
-# Simple FPS Game
+# FPS Game
 
 A browser-based first-person shooter game similar to Call of Duty, built with Three.js.
 
