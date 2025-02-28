@@ -78,6 +78,9 @@ function init() {
     // Create player
     player = new Player(camera, controls, scene);
 
+    // Pass obstacles reference to player for vertical collision detection
+    player.setObstacles(state.obstacles);
+
     // Create weapon
     weapon = new Weapon(camera, scene);
 
@@ -906,15 +909,14 @@ function animate() {
 
         // Only update player movement if controls are locked
         if (document.pointerLockElement === renderer.domElement) {
-            // Update player
-            player.update(delta);
-
             // Store player's previous position for collisions
             const previousPlayerPos = camera.position.clone();
 
-            // Update player based on user input
+            // Update player
+            player.update(delta);
+
+            // Check for collisions with obstacles after player movement
             if (player.moveForward || player.moveBackward || player.moveLeft || player.moveRight) {
-                // Check for collisions with obstacles after player movement
                 const playerBox = new THREE.Box3();
                 playerBox.setFromCenterAndSize(
                     camera.position,
@@ -934,9 +936,11 @@ function animate() {
                     }
                 }
 
-                // If collision detected, revert to previous position
+                // If collision detected, revert to previous position but preserve Y (for jumping)
                 if (obstacleCollision) {
-                    camera.position.copy(previousPlayerPos);
+                    const currentY = camera.position.y; // Save current Y position
+                    camera.position.copy(previousPlayerPos); // Revert position
+                    camera.position.y = currentY; // Restore Y position
                 }
             }
         }
