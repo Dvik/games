@@ -52,6 +52,13 @@ function init() {
     // Create controls (first-person controls)
     controls = new THREE.PointerLockControls(camera, renderer.domElement);
 
+    // Add click event to resume game when clicked
+    renderer.domElement.addEventListener('click', () => {
+        if (state.playing && document.pointerLockElement !== renderer.domElement) {
+            controls.lock();
+        }
+    });
+
     // Add lighting
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
     scene.add(ambientLight);
@@ -163,21 +170,16 @@ function onPointerLockChange() {
     if (document.pointerLockElement === renderer.domElement) {
         // Pointer is locked, game is active
         state.playing = true;
+
+        // Remove any existing pause message when game resumes
+        const pauseMessage = document.getElementById('pause-message');
+        if (pauseMessage) {
+            pauseMessage.remove();
+        }
     } else if (state.playing) {
-        // Pointer is unlocked but game was active, show pause message
-        const pauseMessage = document.createElement('div');
-        pauseMessage.className = 'controls-message';
-        pauseMessage.style.position = 'absolute';
-        pauseMessage.style.top = '50%';
-        pauseMessage.style.left = '50%';
-        pauseMessage.style.transform = 'translate(-50%, -50%)';
-        pauseMessage.style.color = 'white';
-        pauseMessage.style.fontSize = '24px';
-        pauseMessage.style.fontWeight = 'bold';
-        pauseMessage.style.textAlign = 'center';
-        pauseMessage.style.textShadow = '2px 2px 4px black';
-        pauseMessage.textContent = 'Game Paused\nClick to resume';
-        hudElement.appendChild(pauseMessage);
+        // The game is still in playing state, but controls are unlocked
+        // Don't change the state.playing value to keep the game running
+        // but show the pause message (which is handled by the unlock event)
     }
 }
 
@@ -199,7 +201,7 @@ function onWindowResize() {
 
 // Handle key down events
 function onKeyDown(event) {
-    if (!state.playing) return;
+    if (!state.playing || document.pointerLockElement !== renderer.domElement) return;
 
     switch (event.code) {
         case 'KeyW':
@@ -225,7 +227,7 @@ function onKeyDown(event) {
 
 // Handle key up events
 function onKeyUp(event) {
-    if (!state.playing) return;
+    if (!state.playing || document.pointerLockElement !== renderer.domElement) return;
 
     switch (event.code) {
         case 'KeyW':
@@ -245,7 +247,8 @@ function onKeyUp(event) {
 
 // Handle mouse down events (shooting)
 function onMouseDown(event) {
-    if (!state.playing || event.button !== 0) return;
+    // Only allow shooting when playing AND pointer is locked
+    if (!state.playing || event.button !== 0 || document.pointerLockElement !== renderer.domElement) return;
 
     if (state.ammo > 0) {
         weapon.shoot();
@@ -770,40 +773,47 @@ function updateHUD() {
 function animate() {
     requestAnimationFrame(animate);
 
+    // Always render the scene to keep it visible even when paused
+    renderer.render(scene, camera);
+
+    // Only update game logic if the game is playing
     if (state.playing) {
         const delta = clock.getDelta();
 
-        // Update player
-        player.update(delta);
+        // Only update player movement if controls are locked
+        if (document.pointerLockElement === renderer.domElement) {
+            // Update player
+            player.update(delta);
 
-        // Store player's previous position for collisions
-        const previousPlayerPos = camera.position.clone();
+            // Store player's previous position for collisions
+            const previousPlayerPos = camera.position.clone();
 
-        // Update player based on user input
-        if (player.moveForward || player.moveBackward || player.moveLeft || player.moveRight) {
-            // Check for collisions with obstacles after player movement
-            const playerBox = new THREE.Box3();
-            playerBox.setFromCenterAndSize(
-                camera.position,
-                new THREE.Vector3(0.5, 1.6, 0.5) // Player size
-            );
+            // Update player based on user input
+            if (player.moveForward || player.moveBackward || player.moveLeft || player.moveRight) {
+                // Check for collisions with obstacles after player movement
+                const playerBox = new THREE.Box3();
+                playerBox.setFromCenterAndSize(
+                    camera.position,
+                    new THREE.Vector3(0.5, 1.6, 0.5) // Player size
+                );
 
-            // Check collision with obstacles
-            let obstacleCollision = false;
-            for (const obstacle of state.obstacles) {
-                if (!obstacle.mesh) continue;
+                // Check collision with obstacles
+                let obstacleCollision = false;
+                for (const obstacle of state.obstacles) {
+                    if (!obstacle.mesh) continue;
 
-                const obstacleBox = new THREE.Box3().setFromObject(obstacle.mesh);
+                    const obstacleBox = new THREE.Box3().setFromObject(obstacle.mesh);
 
-                if (playerBox.intersectsBox(obstacleBox)) {
-                    obstacleCollision = true;
-                    break;
+                    if (playerBox.intersectsBox(obstacleBox)) {
+                        obstacleCollision = true;
+                        break;
+                    }
                 }
-            }
 
-            // If collision detected, revert to previous position
-            if (obstacleCollision) {
-                camera.position.copy(previousPlayerPos);
+                // If collision detected, revert to previous position
+                if (obstacleCollision) {
+                    camera.position.copy(previousPlayerPos);
+                }
             }
         }
 
@@ -835,8 +845,6 @@ function animate() {
             }
         });
     }
-
-    renderer.render(scene, camera);
 }
 
 // Start the game on page load
@@ -845,7 +853,31 @@ window.addEventListener('load', init);
 // Controls instruction when pointer lock is released
 controls.addEventListener('unlock', function () {
     if (state.playing) {
-        document.getElementById('hud').innerHTML += '<div class="controls-message">Click to resume game</div>';
+        const pauseMessage = document.createElement('div');
+        pauseMessage.className = 'controls-message';
+        pauseMessage.id = 'pause-message';
+        pauseMessage.style.position = 'absolute';
+        pauseMessage.style.top = '50%';
+        pauseMessage.style.left = '50%';
+        pauseMessage.style.transform = 'translate(-50%, -50%)';
+        pauseMessage.style.color = 'white';
+        pauseMessage.style.fontSize = '24px';
+        pauseMessage.style.fontWeight = 'bold';
+        pauseMessage.style.textAlign = 'center';
+        pauseMessage.style.textShadow = '2px 2px 4px black';
+        pauseMessage.style.cursor = 'pointer';
+        pauseMessage.textContent = 'Game Paused\nClick to resume';
+
+        // Add click event to resume game
+        pauseMessage.addEventListener('click', () => {
+            controls.lock();
+            // Remove pause message when game resumes
+            if (document.getElementById('pause-message')) {
+                document.getElementById('pause-message').remove();
+            }
+        });
+
+        hudElement.appendChild(pauseMessage);
     }
 });
 
