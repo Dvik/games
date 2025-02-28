@@ -579,10 +579,10 @@ function checkEnemyHits() {
                 console.log(`Enemy removed. Remaining enemies: ${state.enemies.length}`);
 
                 // Spawn new enemy after a short delay
-                console.log('Scheduling new enemy spawn in 2 seconds');
+                console.log('Scheduling new enemy spawn in 1 seconds');
                 setTimeout(() => {
-                    spawnEnemies(1);
-                }, 2000);
+                    spawnEnemies(2);
+                }, 1000);
             }
         }
     }

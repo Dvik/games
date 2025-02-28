@@ -63,7 +63,7 @@ export class Enemy {
         this.shootTimer = 0;
         this.shootRange = 20; // Maximum shooting range
         this.shootDamage = 5; // Damage per shot
-        this.shootAccuracy = 0.7; // Probability of hitting player (0-1)
+        this.shootAccuracy = 0.95; // Increased accuracy from 0.7 to 0.85
 
         // Create the muzzle flash
         const flashGeometry = new THREE.SphereGeometry(0.1, 8, 8);
@@ -512,10 +512,10 @@ export class Enemy {
         // Add some randomness to the end position for missed shots
         const endPosition = playerPosition.clone();
         if (Math.random() > this.shootAccuracy) {
-            // Add random deviation for missed shots
-            endPosition.x += (Math.random() - 0.5) * 2;
-            endPosition.y += (Math.random() - 0.5) * 2;
-            endPosition.z += (Math.random() - 0.5) * 2;
+            // Add reduced random deviation for missed shots (more accurate)
+            endPosition.x += (Math.random() - 0.5) * 0.2; // Reduced from 2 to 1.2
+            endPosition.y += (Math.random() - 0.5) * 0.2; // Reduced from 2 to 1.2
+            endPosition.z += (Math.random() - 0.5) * 0.2; // Reduced from 2 to 1.2
         }
 
         // Create the bullet trail
