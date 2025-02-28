@@ -345,11 +345,15 @@ function spawnEnemies(count) {
         let validPosition = false;
         let x, z;
         let attempts = 0;
-        const maxAttempts = 20;
+        const maxAttempts = 30; // Increased from 20 to allow more attempts
+
+        // Define map boundaries (adjust these values based on your map size)
+        const mapBoundary = 30; // Restrict spawning to within ±30 units from center
 
         while (!validPosition && attempts < maxAttempts) {
-            x = (Math.random() - 0.5) * 40;
-            z = (Math.random() - 0.5) * 40;
+            // Spawn within a more limited range to avoid going outside the map
+            x = (Math.random() - 0.5) * (mapBoundary * 1.5);
+            z = (Math.random() - 0.5) * (mapBoundary * 1.5);
 
             // Create a temporary box for collision testing
             const testBox = new THREE.Box3();
@@ -358,7 +362,13 @@ function spawnEnemies(count) {
                 new THREE.Vector3(1, 2, 1) // Enemy size
             );
 
-            // Check if this position is far enough from other enemies
+            // Check if this position is within map boundaries
+            if (Math.abs(x) > mapBoundary || Math.abs(z) > mapBoundary) {
+                attempts++;
+                continue; // Position is outside map, try again
+            }
+
+            // Check if position is valid
             validPosition = true;
 
             // Check collision with other enemies
@@ -368,7 +378,7 @@ function spawnEnemies(count) {
                     Math.pow(z - enemy.mesh.position.z, 2)
                 );
 
-                if (dist < 3) { // Minimum distance between enemies
+                if (dist < 4) { // Increased minimum distance (was 3)
                     validPosition = false;
                     break;
                 }
@@ -381,6 +391,9 @@ function spawnEnemies(count) {
 
                     const obstacleBox = new THREE.Box3().setFromObject(obstacle.mesh);
 
+                    // Add a buffer around obstacles to prevent spawning too close
+                    obstacleBox.expandByScalar(1);
+
                     if (testBox.intersectsBox(obstacleBox)) {
                         validPosition = false;
                         break;
@@ -388,10 +401,67 @@ function spawnEnemies(count) {
                 }
             }
 
+            // Check distance from player to avoid spawning too close
+            const distanceToPlayer = Math.sqrt(
+                Math.pow(x - camera.position.x, 2) +
+                Math.pow(z - camera.position.z, 2)
+            );
+
+            if (distanceToPlayer < 10) { // Don't spawn too close to player
+                validPosition = false;
+            }
+
             attempts++;
         }
 
-        // If we couldn't find a valid position after max attempts, just use the last one
+        // If we couldn't find a valid position after max attempts, use a fallback position
+        if (!validPosition) {
+            // Use a safe fallback position - randomly select one of several predefined spawn points
+            const spawnPoints = [
+                { x: 15, z: 15 },
+                { x: -15, z: 15 },
+                { x: 15, z: -15 },
+                { x: -15, z: -15 },
+                { x: 0, z: 20 },
+                { x: 20, z: 0 },
+                { x: -20, z: 0 },
+                { x: 0, z: -20 }
+            ];
+
+            // Select a random spawn point
+            const spawnPoint = spawnPoints[Math.floor(Math.random() * spawnPoints.length)];
+            x = spawnPoint.x;
+            z = spawnPoint.z;
+
+            // Check if this spawn point collides with anything
+            let collides = false;
+
+            // Create a test box for the fallback position
+            const testBox = new THREE.Box3();
+            testBox.setFromCenterAndSize(
+                new THREE.Vector3(x, 1, z),
+                new THREE.Vector3(1, 2, 1)
+            );
+
+            // Check for collisions with obstacles
+            for (const obstacle of state.obstacles) {
+                if (!obstacle.mesh) continue;
+
+                const obstacleBox = new THREE.Box3().setFromObject(obstacle.mesh);
+                if (testBox.intersectsBox(obstacleBox)) {
+                    collides = true;
+                    break;
+                }
+            }
+
+            // If the fallback position also collides, move it up slightly
+            if (collides) {
+                x += (Math.random() - 0.5) * 5;
+                z += (Math.random() - 0.5) * 5;
+            }
+        }
+
+        // Create enemy at valid position
         const enemy = new Enemy(new THREE.Vector3(x, 0, z), scene);
         state.enemies.push(enemy);
     }

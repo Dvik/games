@@ -31,12 +31,25 @@ export class Enemy {
 
         // Path finding variables
         this.pathUpdateTime = 0;
-        this.pathUpdateInterval = 0.5; // Update path every 0.5 seconds
+        this.pathUpdateInterval = 0.2; // Update path more frequently (was 0.5)
+
+        // Improved pathfinding properties
+        this.isStuck = false;
+        this.stuckTime = 0;
+        this.stuckThreshold = 0.5; // Reduced time to consider stuck (was 1.0)
+        this.lastPositions = []; // Store last few positions to detect being stuck
+        this.pathfindingMode = 'direct'; // 'direct', 'around', 'hunting'
+        this.pathSwitchTime = 0;
+        this.currentPathDirection = null; // For tracking alternate path direction
+        this.huntingTimeout = 0; // Time spent actively hunting the player
+        this.lastKnownPlayerPosition = null; // Store player's last known position
+        this.memory = 10; // How long (in seconds) the enemy remembers player's last position
+        this.memoryTimer = 0; // Timer for forgetting player's position
 
         // Random movement within range of player
         this.wanderRadius = 15;
-        this.detectionRadius = 20;
-        this.attackRadius = 10;
+        this.detectionRadius = 40; // Increased detection radius (was 30)
+        this.attackRadius = 15; // Increased attack radius (was 10)
 
         // Collision avoidance
         this.avoidanceRadius = 2.5; // Distance to start avoiding other enemies
@@ -45,7 +58,7 @@ export class Enemy {
         this.canShoot = true;
         this.shootCooldown = 2.0; // Time between shots in seconds
         this.shootTimer = 0;
-        this.shootRange = 15; // Maximum shooting range
+        this.shootRange = 20; // Maximum shooting range (was 15)
         this.shootDamage = 5; // Damage per shot
         this.shootAccuracy = 0.7; // Probability of hitting player (0-1)
 
@@ -60,6 +73,10 @@ export class Enemy {
         this.muzzleFlash.position.set(0, 0, -0.6); // Position in front of enemy
         this.mesh.add(this.muzzleFlash);
         this.muzzleFlash.visible = false;
+
+        // Debug visualization for pathfinding (if enabled)
+        this.debugMode = false;
+        this.debugMarkers = [];
     }
 
     createHealthBar() {
@@ -97,44 +114,135 @@ export class Enemy {
             this.healthBarContainer.lookAt(playerPosition);
         }
 
-        // Store previous position for collision resolution
+        // Store previous position for collision resolution and stuck detection
         this.previousPosition.copy(this.mesh.position);
 
-        // Path finding update (simplified)
-        this.pathUpdateTime += delta;
+        // Track positions to detect if stuck
+        this.trackPosition();
 
-        if (this.pathUpdateTime >= this.pathUpdateInterval) {
-            this.pathUpdateTime = 0;
-            this.updatePath(playerPosition, otherEnemies);
+        // Update memory of player's position
+        if (this.hasLineOfSightToPlayer(playerPosition, obstacles)) {
+            // If we can see the player, update last known position
+            this.lastKnownPlayerPosition = playerPosition.clone();
+            this.memoryTimer = 0;
+        } else if (this.lastKnownPlayerPosition) {
+            // Increment memory timer if we have a stored position
+            this.memoryTimer += delta;
+            if (this.memoryTimer > this.memory) {
+                // Forget player's position after memory time expires
+                this.lastKnownPlayerPosition = null;
+            }
         }
 
-        // Move enemy
+        // Path finding update
+        this.pathUpdateTime += delta;
+        if (this.pathUpdateTime >= this.pathUpdateInterval) {
+            this.pathUpdateTime = 0;
+            this.updatePath(playerPosition, otherEnemies, obstacles);
+        }
+
+        // Update stuck timer if enemy hasn't moved much
+        if (this.isStuck) {
+            this.stuckTime += delta;
+            if (this.stuckTime > this.stuckThreshold) {
+                // Switch pathfinding mode if stuck for too long
+                this.switchPathfindingMode(obstacles, playerPosition);
+                this.stuckTime = 0;
+            }
+        }
+
+        // Move enemy based on current pathfinding mode
         const distanceToPlayer = this.mesh.position.distanceTo(playerPosition);
+        const targetPosition = this.lastKnownPlayerPosition || playerPosition;
 
         // Only move if within detection radius but not too close
         if (distanceToPlayer < this.detectionRadius && distanceToPlayer > 1.5) {
-            // Calculate direction to player
-            this.moveDirection.subVectors(playerPosition, this.mesh.position).normalize();
+            // Calculate move vector based on current pathfinding mode
+            let moveVector = new THREE.Vector3();
+
+            switch (this.pathfindingMode) {
+                case 'direct':
+                    // Direct path to player
+                    moveVector.subVectors(targetPosition, this.mesh.position).normalize();
+                    break;
+
+                case 'around':
+                    // Try to move around obstacles
+                    moveVector = this.calculateAroundPath(obstacles, targetPosition);
+                    break;
+
+                case 'hunting':
+                    // More aggressive hunting behavior
+                    moveVector = this.calculateHuntingPath(targetPosition, obstacles);
+                    break;
+
+                default:
+                    moveVector.subVectors(targetPosition, this.mesh.position).normalize();
+            }
 
             // Apply enemy avoidance to the movement direction
+            this.moveDirection.copy(moveVector);
             this.applyEnemyAvoidance(otherEnemies);
 
-            // Move towards player
+            // Move towards target
             const moveSpeed = this.speed * delta;
             this.tempVector.copy(this.moveDirection).multiplyScalar(moveSpeed);
 
             // Only move on X and Z axes (keep Y position fixed to ground)
-            this.mesh.position.x += this.tempVector.x;
-            this.mesh.position.z += this.tempVector.z;
+            const newX = this.mesh.position.x + this.tempVector.x;
+            const newZ = this.mesh.position.z + this.tempVector.z;
 
-            // Check for collisions with obstacles
+            // Try movement first on X axis, then Z axis separately to allow sliding along walls
+            this.mesh.position.x = newX;
+
+            // Check for collisions with obstacles after moving on X axis
             if (obstacles && this.checkObstacleCollisions(obstacles)) {
-                // If collision with obstacle, revert to previous position
-                this.mesh.position.copy(this.previousPosition);
+                // If collision on X axis, revert just the X position
+                this.mesh.position.x = this.previousPosition.x;
+                // Mark as potentially stuck on X
+                this.isStuck = true;
             }
 
-            // Face towards player
-            this.mesh.lookAt(playerPosition.x, this.mesh.position.y, playerPosition.z);
+            // Then try movement on Z axis
+            this.mesh.position.z = newZ;
+
+            // Check for collisions with obstacles after moving on Z axis
+            if (obstacles && this.checkObstacleCollisions(obstacles)) {
+                // If collision on Z axis, revert just the Z position
+                this.mesh.position.z = this.previousPosition.z;
+                // Mark as potentially stuck on Z
+                this.isStuck = true;
+            }
+
+            // If we didn't get stuck on either axis, we're not stuck
+            if (this.mesh.position.x !== this.previousPosition.x ||
+                this.mesh.position.z !== this.previousPosition.z) {
+                this.isStuck = false;
+                this.stuckTime = 0;
+            }
+
+            // Face towards player or movement direction based on mode
+            if (this.pathfindingMode === 'direct' || this.hasLineOfSightToPlayer(playerPosition, obstacles)) {
+                this.mesh.lookAt(playerPosition.x, this.mesh.position.y, playerPosition.z);
+            } else {
+                // Look in the direction of movement
+                const lookTarget = new THREE.Vector3(
+                    this.mesh.position.x + this.moveDirection.x,
+                    this.mesh.position.y,
+                    this.mesh.position.z + this.moveDirection.z
+                );
+                this.mesh.lookAt(lookTarget);
+            }
+        }
+
+        // Update hunting timeout
+        if (this.pathfindingMode === 'hunting') {
+            this.huntingTimeout += delta;
+            if (this.huntingTimeout > 5) {
+                // After 5 seconds, try direct approach again
+                this.pathfindingMode = 'direct';
+                this.huntingTimeout = 0;
+            }
         }
 
         // Update shooting cooldown
@@ -149,6 +257,203 @@ export class Enemy {
         // Try to shoot at player if in range and cooldown finished
         if (this.canShoot && distanceToPlayer < this.shootRange) {
             this.tryShootAtPlayer(playerPosition, obstacles);
+        }
+
+        // Clear old debug markers if any
+        if (this.debugMode) {
+            this.clearDebugMarkers();
+        }
+    }
+
+    trackPosition() {
+        // Store last few positions (limit to 5)
+        this.lastPositions.push(this.mesh.position.clone());
+        if (this.lastPositions.length > 5) {
+            this.lastPositions.shift();
+        }
+
+        // If we have enough position samples, check if stuck
+        if (this.lastPositions.length >= 5) {
+            let totalMovement = 0;
+            for (let i = 1; i < this.lastPositions.length; i++) {
+                totalMovement += this.lastPositions[i].distanceTo(this.lastPositions[i - 1]);
+            }
+
+            // If total movement over last 5 frames is very small, consider stuck
+            if (totalMovement < 0.1) { // Reduced threshold (was 0.2)
+                this.isStuck = true;
+            }
+        }
+    }
+
+    switchPathfindingMode(obstacles, playerPosition) {
+        // If we've been in hunting mode for too long without progress, try a completely random direction
+        if (this.pathfindingMode === 'hunting' && this.huntingTimeout > 3) {
+            // Random perpendicular direction
+            this.moveDirection.set(
+                Math.random() * 2 - 1,
+                0,
+                Math.random() * 2 - 1
+            ).normalize();
+
+            return;
+        }
+
+        switch (this.pathfindingMode) {
+            case 'direct':
+                // If direct path is blocked, try around path
+                this.pathfindingMode = 'around';
+
+                // Choose a random perpendicular direction
+                const dirToPlayer = new THREE.Vector3().subVectors(
+                    playerPosition, this.mesh.position
+                ).normalize();
+
+                // Find perpendicular vector (either right or left of player direction)
+                this.currentPathDirection = Math.random() > 0.5 ?
+                    new THREE.Vector3(dirToPlayer.z, 0, -dirToPlayer.x) :
+                    new THREE.Vector3(-dirToPlayer.z, 0, dirToPlayer.x);
+                break;
+
+            case 'around':
+                // If around path doesn't work, try hunting mode with different direction
+                this.pathfindingMode = 'hunting';
+                this.huntingTimeout = 0;
+
+                // Try the opposite direction
+                if (this.currentPathDirection) {
+                    this.currentPathDirection.negate();
+                }
+                break;
+
+            case 'hunting':
+                // If hunting doesn't work, try a different around path
+                this.pathfindingMode = 'around';
+
+                // Try a random direction
+                const randomAngle = Math.random() * Math.PI * 2;
+                this.currentPathDirection = new THREE.Vector3(
+                    Math.cos(randomAngle),
+                    0,
+                    Math.sin(randomAngle)
+                );
+                break;
+        }
+
+        // Reset stuck timer
+        this.stuckTime = 0;
+
+        // Debug visualization
+        if (this.debugMode) {
+            console.log(`Enemy switched to ${this.pathfindingMode} mode`);
+        }
+    }
+
+    calculateAroundPath(obstacles, playerPosition) {
+        if (!this.currentPathDirection) {
+            // Initialize path direction if not set
+            const dirToPlayer = new THREE.Vector3().subVectors(
+                playerPosition, this.mesh.position
+            ).normalize();
+
+            // Perpendicular vector (either right or left of player direction)
+            this.currentPathDirection = Math.random() > 0.5 ?
+                new THREE.Vector3(dirToPlayer.z, 0, -dirToPlayer.x) :
+                new THREE.Vector3(-dirToPlayer.z, 0, dirToPlayer.x);
+        }
+
+        // Start with the side direction
+        const aroundDirection = this.currentPathDirection.clone();
+
+        // Blend with a bit of forward motion toward player
+        const dirToPlayer = new THREE.Vector3().subVectors(
+            playerPosition, this.mesh.position
+        ).normalize();
+
+        // Blend 60% side movement, 40% toward player (was 70/30)
+        aroundDirection.multiplyScalar(0.6);
+        dirToPlayer.multiplyScalar(0.4);
+        aroundDirection.add(dirToPlayer);
+        aroundDirection.normalize();
+
+        return aroundDirection;
+    }
+
+    calculateHuntingPath(playerPosition, obstacles) {
+        // Try different directions to find the player
+        const dirToPlayer = new THREE.Vector3().subVectors(
+            playerPosition, this.mesh.position
+        ).normalize();
+
+        // Create a wider zigzag pattern
+        const huntDir = new THREE.Vector3();
+
+        // Oscillate direction based on time - faster oscillation (was 500ms)
+        const zigzagFactor = Math.sin(Date.now() / 300) * 1.0; // Increased amplitude (was 0.8)
+
+        // Create a zigzag perpendicular to player direction
+        const perpendicular = new THREE.Vector3(dirToPlayer.z, 0, -dirToPlayer.x);
+        perpendicular.multiplyScalar(zigzagFactor);
+
+        // Combine with forward direction
+        huntDir.addVectors(dirToPlayer, perpendicular);
+        huntDir.normalize();
+
+        // Check if this direction would cause collision
+        const testPosition = this.mesh.position.clone().add(
+            huntDir.clone().multiplyScalar(0.5)
+        );
+
+        // Create a collision test box
+        const testBox = new THREE.Box3();
+        testBox.setFromCenterAndSize(
+            testPosition,
+            new THREE.Vector3(1, 2, 1) // Enemy size
+        );
+
+        // Check for collisions
+        let wouldCollide = false;
+        for (const obstacle of obstacles) {
+            if (!obstacle.mesh) continue;
+
+            const obstacleBox = new THREE.Box3().setFromObject(obstacle.mesh);
+            if (testBox.intersectsBox(obstacleBox)) {
+                wouldCollide = true;
+                break;
+            }
+        }
+
+        // If would collide, try different direction
+        if (wouldCollide) {
+            // Reflect and try again with more randomness
+            huntDir.set(
+                dirToPlayer.x + (Math.random() - 0.5) * 1.0, // Increased randomness (was 0.6)
+                0,
+                dirToPlayer.z + (Math.random() - 0.5) * 1.0
+            ).normalize();
+        }
+
+        return huntDir;
+    }
+
+    updatePath(playerPosition, otherEnemies, obstacles) {
+        const distanceToPlayer = this.mesh.position.distanceTo(playerPosition);
+
+        // If player is out of detection range and we don't remember their position, wander randomly
+        if (distanceToPlayer > this.detectionRadius && !this.lastKnownPlayerPosition) {
+            this.wander();
+            this.pathfindingMode = 'direct'; // Reset pathfinding mode
+        }
+        // If direct line of sight to player, use direct path
+        else if (this.hasLineOfSightToPlayer(playerPosition, obstacles)) {
+            this.moveDirection.subVectors(playerPosition, this.mesh.position).normalize();
+            this.pathfindingMode = 'direct';
+        }
+        // If we remember player's position but can't see them, hunt more aggressively
+        else if (this.lastKnownPlayerPosition && this.pathfindingMode === 'direct') {
+            // Switch to hunting mode if we remember where the player was but can't see them
+            this.pathfindingMode = 'hunting';
+            this.huntingTimeout = 0;
         }
     }
 
@@ -279,29 +584,13 @@ export class Enemy {
         return false; // No collision
     }
 
-    updatePath(playerPosition, otherEnemies) {
-        const distanceToPlayer = this.mesh.position.distanceTo(playerPosition);
-
-        // If player is out of detection range, wander randomly
-        if (distanceToPlayer > this.detectionRadius) {
-            this.wander();
-        }
-        // If player is within attack range, move towards player
-        else if (distanceToPlayer <= this.attackRadius) {
-            this.moveDirection.subVectors(playerPosition, this.mesh.position).normalize();
-        }
-        // Otherwise, move towards player but more cautiously
-        else {
-            this.moveDirection.subVectors(playerPosition, this.mesh.position).normalize();
-
-            // Add some randomness to movement
-            this.moveDirection.x += (Math.random() - 0.5) * 0.3;
-            this.moveDirection.z += (Math.random() - 0.5) * 0.3;
-            this.moveDirection.normalize();
-        }
-
-        // Apply enemy avoidance
-        this.applyEnemyAvoidance(otherEnemies);
+    wander() {
+        // Random movement within the map
+        this.moveDirection.set(
+            Math.random() * 2 - 1,
+            0,
+            Math.random() * 2 - 1
+        ).normalize();
     }
 
     applyEnemyAvoidance(otherEnemies) {
@@ -341,15 +630,6 @@ export class Enemy {
         }
     }
 
-    wander() {
-        // Random movement within the map
-        this.moveDirection.set(
-            Math.random() * 2 - 1,
-            0,
-            Math.random() * 2 - 1
-        ).normalize();
-    }
-
     takeDamage(amount) {
         this.health -= amount;
 
@@ -365,5 +645,13 @@ export class Enemy {
         }, 100);
 
         return this.health <= 0;
+    }
+
+    // Debug visualization
+    clearDebugMarkers() {
+        for (const marker of this.debugMarkers) {
+            this.scene.remove(marker);
+        }
+        this.debugMarkers = [];
     }
 } 
