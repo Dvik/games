@@ -1,0 +1,24 @@
+{
+  "name": "games",
+  "version": "1.0.0",
+  "description": "A browser-based first-person shooter game similar to Call of Duty, built with Three.js.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Dvik/games.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Dvik/games/issues"
+  },
+  "homepage": "https://github.com/Dvik/games#readme",
+  "dependencies": {
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
+  }
+}
