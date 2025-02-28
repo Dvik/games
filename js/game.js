@@ -15,7 +15,8 @@ const state = {
     obstacles: [], // Array to store map obstacles
     damageCooldown: false, // Cooldown for taking damage (to prevent rapid damage)
     damageFlashTime: 0, // Time for damage flash effect
-    playerDamage: 100 // Increased damage amount to kill in one shot
+    playerDamage: 100, // Increased damage amount to kill in one shot
+    username: 'Player' // Default username
 };
 
 // Three.js setup
@@ -31,6 +32,9 @@ const healthValue = document.getElementById('health-value');
 const ammoCount = document.getElementById('ammo-count');
 const startButton = document.getElementById('start-button');
 const restartButton = document.getElementById('restart-button');
+const usernameInput = document.getElementById('username-input');
+const finalScoreValue = document.getElementById('final-score-value');
+const leaderboardDiv = document.getElementById('leaderboard');
 
 // Initialize the game
 function init() {
@@ -85,8 +89,13 @@ function init() {
     document.addEventListener('pointerlockchange', onPointerLockChange);
 
     // Setup UI event listeners
-    startButton.addEventListener('click', startGame);
+    startButton.addEventListener('click', onStartButtonClick);
     restartButton.addEventListener('click', restartGame);
+
+    // Set default username from localStorage if available
+    if (localStorage.getItem('fps_username')) {
+        usernameInput.value = localStorage.getItem('fps_username');
+    }
 
     // Enhance HUD with additional CSS
     enhanceHUD();
@@ -138,6 +147,21 @@ function enhanceHUD() {
     healthValueBar.style.width = '100%';
 }
 
+// Handle start button click - collect username first
+function onStartButtonClick() {
+    // Get username or use default
+    const username = usernameInput.value.trim();
+    if (username) {
+        state.username = username;
+        localStorage.setItem('fps_username', username);
+    } else {
+        state.username = 'Player' + Math.floor(Math.random() * 1000);
+    }
+
+    // Start the game
+    startGame();
+}
+
 // Start the game
 function startGame() {
     // Reset game state
@@ -185,11 +209,25 @@ function onPointerLockChange() {
 
 // Restart the game
 function restartGame() {
+    // Reset game state
     state.health = 100;
     state.ammo = 30;
     state.score = 0;
+
+    // Hide game over screen
     gameOverScreen.classList.add('hidden');
-    startGame();
+
+    // Show start screen to ask for username again
+    startScreen.classList.remove('hidden');
+
+    // Clear HUD
+    hudElement.style.display = 'none';
+
+    // Reset enemies
+    state.enemies.forEach(enemy => {
+        scene.remove(enemy.mesh);
+    });
+    state.enemies = [];
 }
 
 // Handle window resize
@@ -726,7 +764,93 @@ function showDamageFlash() {
 function gameOver() {
     state.playing = false;
     controls.unlock();
+
+    // Update final score display
+    finalScoreValue.textContent = state.score;
+
+    // Save score to leaderboard
+    saveScore(state.username, state.score);
+
+    // Display leaderboard
+    displayLeaderboard();
+
+    // Show game over screen
     gameOverScreen.classList.remove('hidden');
+}
+
+// Save score to leaderboard in localStorage
+function saveScore(username, score) {
+    // Get existing leaderboard or create new one
+    let leaderboard = JSON.parse(localStorage.getItem('fps_leaderboard') || '[]');
+
+    // Add current score
+    leaderboard.push({
+        username: username,
+        score: score,
+        date: new Date().toISOString()
+    });
+
+    // Sort by score (highest first)
+    leaderboard.sort((a, b) => b.score - a.score);
+
+    // Limit to top 10 scores
+    leaderboard = leaderboard.slice(0, 10);
+
+    // Save back to localStorage
+    localStorage.setItem('fps_leaderboard', JSON.stringify(leaderboard));
+}
+
+// Display leaderboard
+function displayLeaderboard() {
+    // Clear existing leaderboard
+    leaderboardDiv.innerHTML = '';
+
+    // Get leaderboard from localStorage
+    const leaderboard = JSON.parse(localStorage.getItem('fps_leaderboard') || '[]');
+
+    // No scores yet
+    if (leaderboard.length === 0) {
+        const noScoresMsg = document.createElement('div');
+        noScoresMsg.textContent = 'No scores yet!';
+        noScoresMsg.style.textAlign = 'center';
+        noScoresMsg.style.padding = '10px';
+        leaderboardDiv.appendChild(noScoresMsg);
+        return;
+    }
+
+    // Create entries for each score
+    leaderboard.forEach((entry, index) => {
+        const entryDiv = document.createElement('div');
+        entryDiv.className = 'leaderboard-entry';
+
+        // Highlight current player's score
+        if (entry.username === state.username && entry.score === state.score) {
+            entryDiv.classList.add('current-player');
+        }
+
+        // Create rank element
+        const rankSpan = document.createElement('span');
+        rankSpan.className = 'rank';
+        rankSpan.textContent = `${index + 1}.`;
+
+        // Create username element
+        const usernameSpan = document.createElement('span');
+        usernameSpan.className = 'leaderboard-username';
+        usernameSpan.textContent = entry.username;
+
+        // Create score element
+        const scoreSpan = document.createElement('span');
+        scoreSpan.className = 'leaderboard-score';
+        scoreSpan.textContent = entry.score;
+
+        // Add elements to entry
+        entryDiv.appendChild(rankSpan);
+        entryDiv.appendChild(usernameSpan);
+        entryDiv.appendChild(scoreSpan);
+
+        // Add entry to leaderboard
+        leaderboardDiv.appendChild(entryDiv);
+    });
 }
 
 // Update the HUD

@@ -18,11 +18,21 @@
         </div>
         <div id="start-screen">
             <h1>FPS Game</h1>
+            <div class="input-container">
+                <input type="text" id="username-input" placeholder="Enter your username" maxlength="15">
+            </div>
             <button id="start-button">Start Game</button>
             <p>Controls: WASD to move, Mouse to aim, Click to shoot</p>
         </div>
         <div id="game-over-screen" class="hidden">
             <h1>Game Over</h1>
+            <div id="final-score">Your Score: <span id="final-score-value">0</span></div>
+            <div id="leaderboard-container">
+                <h2>Leaderboard</h2>
+                <div id="leaderboard">
+                    <!-- Leaderboard entries will be inserted here -->
+                </div>
+            </div>
             <button id="restart-button">Play Again</button>
         </div>
     </div>
