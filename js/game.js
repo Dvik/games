@@ -186,7 +186,7 @@ function startGame() {
     state.enemies = [];
 
     // Spawn initial enemies
-    spawnEnemies(5);
+    spawnEnemies(15);
 }
 
 // Handle pointer lock change event
@@ -417,10 +417,10 @@ function spawnEnemies(count) {
         let validPosition = false;
         let x, z;
         let attempts = 0;
-        const maxAttempts = 30; // Increased from 20 to allow more attempts
+        const maxAttempts = 50; // Increased from 30 to allow more spawn attempts for larger map
 
         // Define map boundaries (adjust these values based on your map size)
-        const mapBoundary = 30; // Restrict spawning to within ±30 units from center
+        const mapBoundary = 130; // Increased from 30 to 130 for the larger map
 
         while (!validPosition && attempts < maxAttempts) {
             // Spawn within a more limited range to avoid going outside the map

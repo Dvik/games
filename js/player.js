@@ -10,8 +10,8 @@ export class Player {
         this.moveLeft = false;
         this.moveRight = false;
 
-        // Movement speed
-        this.speed = 5.0;
+        // Movement speed - increased for larger map
+        this.speed = 8.0; // Increased from 5.0 to 8.0
 
         // Gravity and jumping
         this.velocity = new THREE.Vector3();
@@ -95,8 +95,8 @@ export class Player {
     }
 
     checkMapBoundaries() {
-        // Simple map boundary check
-        const mapSize = 50; // Size of the map
+        // Updated map boundary check for larger map
+        const mapSize = 150; // Updated from 50 to match map.js
 
         if (Math.abs(this.camera.position.x) > mapSize / 2) {
             this.camera.position.x = Math.sign(this.camera.position.x) * mapSize / 2;

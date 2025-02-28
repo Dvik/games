@@ -2,7 +2,7 @@ export class Enemy {
     constructor(position, scene) {
         console.log('Creating new enemy:', position);
         this.scene = scene;
-        this.speed = 2.0;
+        this.speed = 3.5;
         this.health = 100;
         this.maxHealth = 100; // Keep max health for damage calculations
         this.type = 'enemy'; // Add type identifier
@@ -30,40 +30,40 @@ export class Enemy {
 
         // Path finding variables
         this.pathUpdateTime = 0;
-        this.pathUpdateInterval = 0.1; // Update path even more frequently (was 0.2)
+        this.pathUpdateInterval = 0.08;
 
         // Improved pathfinding properties
         this.isStuck = false;
         this.stuckTime = 0;
-        this.stuckThreshold = 0.3; // Even faster unstuck detection (was 0.5)
-        this.lastPositions = []; // Store last few positions to detect being stuck
-        this.pathfindingMode = 'direct'; // 'direct', 'around', 'hunting'
+        this.stuckThreshold = 0.2;
+        this.lastPositions = [];
+        this.pathfindingMode = 'direct';
         this.pathSwitchTime = 0;
-        this.currentPathDirection = null; // For tracking alternate path direction
-        this.huntingTimeout = 0; // Time spent actively hunting the player
-        this.lastKnownPlayerPosition = null; // Store player's last known position
-        this.memory = 12; // How long (in seconds) the enemy remembers player's last position (was 10)
-        this.memoryTimer = 0; // Timer for forgetting player's position
+        this.currentPathDirection = null;
+        this.huntingTimeout = 0;
+        this.lastKnownPlayerPosition = null;
+        this.memory = 15;
+        this.memoryTimer = 0;
 
         // Add a teleport recovery for severely stuck enemies
         this.severelyStuckTime = 0;
-        this.teleportThreshold = 5.0; // Time before emergency teleport
+        this.teleportThreshold = 3.0;
 
         // Random movement within range of player
         this.wanderRadius = 15;
-        this.detectionRadius = 50; // Increased detection radius (was 40)
+        this.detectionRadius = 50;
         this.attackRadius = 15;
 
         // Collision avoidance
-        this.avoidanceRadius = 2.5; // Distance to start avoiding other enemies
+        this.avoidanceRadius = 2.5;
 
         // Shooting properties
         this.canShoot = true;
-        this.shootCooldown = 2.0; // Time between shots in seconds
+        this.shootCooldown = 2.0;
         this.shootTimer = 0;
-        this.shootRange = 20; // Maximum shooting range
-        this.shootDamage = 5; // Damage per shot
-        this.shootAccuracy = 0.95; // Increased accuracy from 0.7 to 0.85
+        this.shootRange = 20;
+        this.shootDamage = 5;
+        this.shootAccuracy = 0.95;
 
         // Create the muzzle flash
         const flashGeometry = new THREE.SphereGeometry(0.1, 8, 8);
@@ -73,7 +73,7 @@ export class Enemy {
             opacity: 0.8
         });
         this.muzzleFlash = new THREE.Mesh(flashGeometry, flashMaterial);
-        this.muzzleFlash.position.set(0, 0, -0.6); // Position in front of enemy
+        this.muzzleFlash.position.set(0, 0, -0.6);
         this.mesh.add(this.muzzleFlash);
         this.muzzleFlash.visible = false;
 
@@ -246,14 +246,14 @@ export class Enemy {
         }
 
         // If we have enough position samples, check if stuck
-        if (this.lastPositions.length >= 3) { // Reduced required positions (was 5)
+        if (this.lastPositions.length >= 3) {
             let totalMovement = 0;
             for (let i = 1; i < this.lastPositions.length; i++) {
                 totalMovement += this.lastPositions[i].distanceTo(this.lastPositions[i - 1]);
             }
 
             // If total movement over last 3 frames is very small, consider stuck
-            if (totalMovement < 0.05) { // Even more sensitive threshold (was 0.1)
+            if (totalMovement < 0.05) {
                 this.isStuck = true;
             }
         }
