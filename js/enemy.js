@@ -3,7 +3,7 @@ export class Enemy {
         this.scene = scene;
         this.speed = 2.0;
         this.health = 100;
-        this.maxHealth = 100; // Store max health for health bar calculation
+        this.maxHealth = 100; // Keep max health for damage calculations
         this.type = 'enemy'; // Add type identifier
 
         // Create enemy mesh
@@ -18,9 +18,6 @@ export class Enemy {
         this.mesh.userData.parent = this;
         this.mesh.userData.type = 'enemy';
 
-        // Create health bar
-        this.createHealthBar();
-
         // Add mesh to scene
         scene.add(this.mesh);
 
@@ -31,25 +28,29 @@ export class Enemy {
 
         // Path finding variables
         this.pathUpdateTime = 0;
-        this.pathUpdateInterval = 0.2; // Update path more frequently (was 0.5)
+        this.pathUpdateInterval = 0.1; // Update path even more frequently (was 0.2)
 
         // Improved pathfinding properties
         this.isStuck = false;
         this.stuckTime = 0;
-        this.stuckThreshold = 0.5; // Reduced time to consider stuck (was 1.0)
+        this.stuckThreshold = 0.3; // Even faster unstuck detection (was 0.5)
         this.lastPositions = []; // Store last few positions to detect being stuck
         this.pathfindingMode = 'direct'; // 'direct', 'around', 'hunting'
         this.pathSwitchTime = 0;
         this.currentPathDirection = null; // For tracking alternate path direction
         this.huntingTimeout = 0; // Time spent actively hunting the player
         this.lastKnownPlayerPosition = null; // Store player's last known position
-        this.memory = 10; // How long (in seconds) the enemy remembers player's last position
+        this.memory = 12; // How long (in seconds) the enemy remembers player's last position (was 10)
         this.memoryTimer = 0; // Timer for forgetting player's position
+
+        // Add a teleport recovery for severely stuck enemies
+        this.severelyStuckTime = 0;
+        this.teleportThreshold = 5.0; // Time before emergency teleport
 
         // Random movement within range of player
         this.wanderRadius = 15;
-        this.detectionRadius = 40; // Increased detection radius (was 30)
-        this.attackRadius = 15; // Increased attack radius (was 10)
+        this.detectionRadius = 50; // Increased detection radius (was 40)
+        this.attackRadius = 15;
 
         // Collision avoidance
         this.avoidanceRadius = 2.5; // Distance to start avoiding other enemies
@@ -58,7 +59,7 @@ export class Enemy {
         this.canShoot = true;
         this.shootCooldown = 2.0; // Time between shots in seconds
         this.shootTimer = 0;
-        this.shootRange = 20; // Maximum shooting range (was 15)
+        this.shootRange = 20; // Maximum shooting range
         this.shootDamage = 5; // Damage per shot
         this.shootAccuracy = 0.7; // Probability of hitting player (0-1)
 
@@ -77,43 +78,13 @@ export class Enemy {
         // Debug visualization for pathfinding (if enabled)
         this.debugMode = false;
         this.debugMarkers = [];
-    }
 
-    createHealthBar() {
-        // Create a container for the health bar that will always face the camera
-        this.healthBarContainer = new THREE.Object3D();
-        this.healthBarContainer.position.set(0, 2.2, 0); // Position above enemy
-        this.mesh.add(this.healthBarContainer);
-
-        // Create health bar background (black)
-        const backgroundGeometry = new THREE.PlaneGeometry(1.2, 0.2);
-        const backgroundMaterial = new THREE.MeshBasicMaterial({
-            color: 0x000000,
-            side: THREE.DoubleSide,
-            depthTest: false
-        });
-        this.healthBarBackground = new THREE.Mesh(backgroundGeometry, backgroundMaterial);
-        this.healthBarContainer.add(this.healthBarBackground);
-
-        // Create health bar foreground (green/red gradient)
-        const foregroundGeometry = new THREE.PlaneGeometry(1.2, 0.2);
-        const foregroundMaterial = new THREE.MeshBasicMaterial({
-            color: 0x00ff00,
-            side: THREE.DoubleSide,
-            depthTest: false
-        });
-        this.healthBarForeground = new THREE.Mesh(foregroundGeometry, foregroundMaterial);
-        this.healthBarForeground.scale.set(1, 1, 1); // Will be scaled based on health
-        this.healthBarForeground.position.set(0, 0, 0.01); // Slightly in front of background
-        this.healthBarContainer.add(this.healthBarForeground);
+        // Track wall sliding direction
+        this.wallSlideDirection = null;
+        this.wallHitCount = 0;
     }
 
     update(delta, playerPosition, otherEnemies, obstacles) {
-        // Make health bar face camera
-        if (this.healthBarContainer) {
-            this.healthBarContainer.lookAt(playerPosition);
-        }
-
         // Store previous position for collision resolution and stuck detection
         this.previousPosition.copy(this.mesh.position);
 
@@ -144,11 +115,23 @@ export class Enemy {
         // Update stuck timer if enemy hasn't moved much
         if (this.isStuck) {
             this.stuckTime += delta;
+            this.severelyStuckTime += delta;
+
+            // Try to unstuck regularly
             if (this.stuckTime > this.stuckThreshold) {
                 // Switch pathfinding mode if stuck for too long
                 this.switchPathfindingMode(obstacles, playerPosition);
                 this.stuckTime = 0;
             }
+
+            // Emergency teleport if severely stuck for too long
+            if (this.severelyStuckTime > this.teleportThreshold) {
+                this.emergencyUnstuck(obstacles, playerPosition);
+                this.severelyStuckTime = 0;
+            }
+        } else {
+            // If not stuck, gradually reduce severely stuck time
+            this.severelyStuckTime = Math.max(0, this.severelyStuckTime - delta);
         }
 
         // Move enemy based on current pathfinding mode
@@ -188,37 +171,25 @@ export class Enemy {
             const moveSpeed = this.speed * delta;
             this.tempVector.copy(this.moveDirection).multiplyScalar(moveSpeed);
 
-            // Only move on X and Z axes (keep Y position fixed to ground)
-            const newX = this.mesh.position.x + this.tempVector.x;
-            const newZ = this.mesh.position.z + this.tempVector.z;
+            // Try wall sliding movement with separate X and Z axis checks
+            const wallCollisionX = this.tryMoveWithWallSlide(this.tempVector.x, 0, obstacles);
+            const wallCollisionZ = this.tryMoveWithWallSlide(0, this.tempVector.z, obstacles);
 
-            // Try movement first on X axis, then Z axis separately to allow sliding along walls
-            this.mesh.position.x = newX;
-
-            // Check for collisions with obstacles after moving on X axis
-            if (obstacles && this.checkObstacleCollisions(obstacles)) {
-                // If collision on X axis, revert just the X position
-                this.mesh.position.x = this.previousPosition.x;
-                // Mark as potentially stuck on X
+            // If we hit walls on both X and Z axes, we're probably in a corner
+            if (wallCollisionX && wallCollisionZ) {
                 this.isStuck = true;
-            }
+                this.wallHitCount++;
 
-            // Then try movement on Z axis
-            this.mesh.position.z = newZ;
-
-            // Check for collisions with obstacles after moving on Z axis
-            if (obstacles && this.checkObstacleCollisions(obstacles)) {
-                // If collision on Z axis, revert just the Z position
-                this.mesh.position.z = this.previousPosition.z;
-                // Mark as potentially stuck on Z
-                this.isStuck = true;
-            }
-
-            // If we didn't get stuck on either axis, we're not stuck
-            if (this.mesh.position.x !== this.previousPosition.x ||
-                this.mesh.position.z !== this.previousPosition.z) {
+                // If hitting walls repeatedly, try a more drastic approach
+                if (this.wallHitCount > 3) {
+                    this.attemptCornerEscape(obstacles);
+                    this.wallHitCount = 0;
+                }
+            } else if (!wallCollisionX && !wallCollisionZ) {
+                // If we successfully moved, reset stuck status
                 this.isStuck = false;
                 this.stuckTime = 0;
+                this.wallHitCount = Math.max(0, this.wallHitCount - 1);
             }
 
             // Face towards player or movement direction based on mode
@@ -273,14 +244,14 @@ export class Enemy {
         }
 
         // If we have enough position samples, check if stuck
-        if (this.lastPositions.length >= 5) {
+        if (this.lastPositions.length >= 3) { // Reduced required positions (was 5)
             let totalMovement = 0;
             for (let i = 1; i < this.lastPositions.length; i++) {
                 totalMovement += this.lastPositions[i].distanceTo(this.lastPositions[i - 1]);
             }
 
-            // If total movement over last 5 frames is very small, consider stuck
-            if (totalMovement < 0.1) { // Reduced threshold (was 0.2)
+            // If total movement over last 3 frames is very small, consider stuck
+            if (totalMovement < 0.05) { // Even more sensitive threshold (was 0.1)
                 this.isStuck = true;
             }
         }
@@ -289,13 +260,16 @@ export class Enemy {
     switchPathfindingMode(obstacles, playerPosition) {
         // If we've been in hunting mode for too long without progress, try a completely random direction
         if (this.pathfindingMode === 'hunting' && this.huntingTimeout > 3) {
-            // Random perpendicular direction
+            // Try more extreme random movement
+            const randomAngle = Math.random() * Math.PI * 2;
             this.moveDirection.set(
-                Math.random() * 2 - 1,
+                Math.cos(randomAngle) * 1.5,
                 0,
-                Math.random() * 2 - 1
+                Math.sin(randomAngle) * 1.5
             ).normalize();
 
+            // Reset path optimization to prevent getting stuck in a loop
+            this.wallSlideDirection = null;
             return;
         }
 
@@ -309,10 +283,17 @@ export class Enemy {
                     playerPosition, this.mesh.position
                 ).normalize();
 
-                // Find perpendicular vector (either right or left of player direction)
-                this.currentPathDirection = Math.random() > 0.5 ?
-                    new THREE.Vector3(dirToPlayer.z, 0, -dirToPlayer.x) :
-                    new THREE.Vector3(-dirToPlayer.z, 0, dirToPlayer.x);
+                // Find perpendicular vector with more variation in angle
+                const perpAngle = Math.random() > 0.5 ? Math.PI / 2 : -Math.PI / 2;
+                // Add some randomness to the perpendicular angle
+                const jitterAngle = perpAngle + (Math.random() - 0.5) * 0.5;
+
+                // Calculate direction from angle
+                this.currentPathDirection = new THREE.Vector3(
+                    dirToPlayer.x * Math.cos(jitterAngle) - dirToPlayer.z * Math.sin(jitterAngle),
+                    0,
+                    dirToPlayer.x * Math.sin(jitterAngle) + dirToPlayer.z * Math.cos(jitterAngle)
+                );
                 break;
 
             case 'around':
@@ -320,17 +301,20 @@ export class Enemy {
                 this.pathfindingMode = 'hunting';
                 this.huntingTimeout = 0;
 
-                // Try the opposite direction
+                // Try the opposite direction with some randomness
                 if (this.currentPathDirection) {
                     this.currentPathDirection.negate();
+                    this.currentPathDirection.x += (Math.random() - 0.5) * 0.5;
+                    this.currentPathDirection.z += (Math.random() - 0.5) * 0.5;
+                    this.currentPathDirection.normalize();
                 }
                 break;
 
             case 'hunting':
-                // If hunting doesn't work, try a different around path
+                // If hunting doesn't work, try extreme angles for around path
                 this.pathfindingMode = 'around';
 
-                // Try a random direction
+                // Try a random direction with more extreme variation
                 const randomAngle = Math.random() * Math.PI * 2;
                 this.currentPathDirection = new THREE.Vector3(
                     Math.cos(randomAngle),
@@ -370,26 +354,26 @@ export class Enemy {
             playerPosition, this.mesh.position
         ).normalize();
 
-        // Blend 60% side movement, 40% toward player (was 70/30)
-        aroundDirection.multiplyScalar(0.6);
-        dirToPlayer.multiplyScalar(0.4);
+        // Blend 50% side movement, 50% toward player (was 60/40)
+        aroundDirection.multiplyScalar(0.5);
+        dirToPlayer.multiplyScalar(0.5);
         aroundDirection.add(dirToPlayer);
         aroundDirection.normalize();
 
         return aroundDirection;
     }
 
-    calculateHuntingPath(playerPosition, obstacles) {
+    calculateHuntingPath(targetPosition, obstacles) {
         // Try different directions to find the player
         const dirToPlayer = new THREE.Vector3().subVectors(
-            playerPosition, this.mesh.position
+            targetPosition, this.mesh.position
         ).normalize();
 
         // Create a wider zigzag pattern
         const huntDir = new THREE.Vector3();
 
-        // Oscillate direction based on time - faster oscillation (was 500ms)
-        const zigzagFactor = Math.sin(Date.now() / 300) * 1.0; // Increased amplitude (was 0.8)
+        // Oscillate direction based on time - even faster oscillation (was 300ms)
+        const zigzagFactor = Math.sin(Date.now() / 200) * 1.2; // Increased amplitude (was 1.0)
 
         // Create a zigzag perpendicular to player direction
         const perpendicular = new THREE.Vector3(dirToPlayer.z, 0, -dirToPlayer.x);
@@ -425,11 +409,11 @@ export class Enemy {
 
         // If would collide, try different direction
         if (wouldCollide) {
-            // Reflect and try again with more randomness
+            // Reflect and try again with even more randomness
             huntDir.set(
-                dirToPlayer.x + (Math.random() - 0.5) * 1.0, // Increased randomness (was 0.6)
+                dirToPlayer.x + (Math.random() - 0.5) * 1.5, // Increased randomness (was 1.0)
                 0,
-                dirToPlayer.z + (Math.random() - 0.5) * 1.0
+                dirToPlayer.z + (Math.random() - 0.5) * 1.5
             ).normalize();
         }
 
@@ -454,26 +438,6 @@ export class Enemy {
             // Switch to hunting mode if we remember where the player was but can't see them
             this.pathfindingMode = 'hunting';
             this.huntingTimeout = 0;
-        }
-    }
-
-    updateHealthBar() {
-        if (this.healthBarForeground) {
-            // Scale health bar based on current health percentage
-            const healthPercent = this.health / this.maxHealth;
-            this.healthBarForeground.scale.x = Math.max(0, healthPercent);
-
-            // Center the scaled health bar (since scaling happens from center)
-            this.healthBarForeground.position.x = (healthPercent - 1) * 0.6;
-
-            // Change color based on health level
-            if (healthPercent < 0.3) {
-                this.healthBarForeground.material.color.setHex(0xff0000); // Red
-            } else if (healthPercent < 0.6) {
-                this.healthBarForeground.material.color.setHex(0xffff00); // Yellow
-            } else {
-                this.healthBarForeground.material.color.setHex(0x00ff00); // Green
-            }
         }
     }
 
@@ -633,9 +597,6 @@ export class Enemy {
     takeDamage(amount) {
         this.health -= amount;
 
-        // Update health bar
-        this.updateHealthBar();
-
         // Flash white when hit
         const originalColor = this.mesh.material.color.clone();
         this.mesh.material.color.set(0xffffff);
@@ -644,7 +605,139 @@ export class Enemy {
             this.mesh.material.color.copy(originalColor);
         }, 100);
 
-        return this.health <= 0;
+        // If enemy is killed, create an explosion
+        if (this.health <= 0) {
+            this.createExplosion();
+            return true;
+        }
+
+        return false;
+    }
+
+    // Add explosion effect
+    createExplosion() {
+        // Create explosion center at enemy position
+        const position = this.mesh.position.clone();
+
+        // Create particle system for explosion
+        const particleCount = 30;
+        const particles = [];
+
+        // Create fragments/particles
+        for (let i = 0; i < particleCount; i++) {
+            // Create particles with random colors from red to orange to yellow
+            const colorRandom = Math.random();
+            let color;
+
+            if (colorRandom < 0.6) {
+                color = 0xff0000; // Red
+            } else if (colorRandom < 0.8) {
+                color = 0xff6600; // Orange
+            } else {
+                color = 0xffff00; // Yellow
+            }
+
+            // Random size for particles
+            const size = 0.1 + Math.random() * 0.3;
+
+            // Create particle geometry and material
+            const geometry = new THREE.SphereGeometry(size, 8, 8);
+            const material = new THREE.MeshBasicMaterial({
+                color: color,
+                transparent: true,
+                opacity: 0.8
+            });
+
+            // Create particle mesh
+            const particle = new THREE.Mesh(geometry, material);
+
+            // Set initial position to enemy position
+            particle.position.copy(position);
+
+            // Add random offset to initial position
+            particle.position.x += (Math.random() - 0.5) * 0.5;
+            particle.position.y += Math.random() * 0.5;
+            particle.position.z += (Math.random() - 0.5) * 0.5;
+
+            // Calculate random velocity direction
+            const velocity = new THREE.Vector3(
+                (Math.random() - 0.5) * 5,
+                Math.random() * 5,
+                (Math.random() - 0.5) * 5
+            );
+
+            // Store velocity with particle
+            particle.userData.velocity = velocity;
+            particle.userData.lifetime = 1 + Math.random() * 0.5; // Lifetime in seconds
+
+            // Add to scene
+            this.scene.add(particle);
+            particles.push(particle);
+        }
+
+        // Create a flash of light at explosion center
+        const light = new THREE.PointLight(0xff5500, 5, 8);
+        light.position.copy(position);
+        this.scene.add(light);
+
+        // Animate explosion
+        const startTime = Date.now();
+        const maxTime = 1500; // 1.5 seconds
+
+        const animate = () => {
+            const elapsed = Date.now() - startTime;
+            const normalizedTime = Math.min(elapsed / maxTime, 1.0);
+
+            if (normalizedTime < 1.0) {
+                // Update each particle
+                for (let i = 0; i < particles.length; i++) {
+                    const particle = particles[i];
+                    const velocity = particle.userData.velocity;
+
+                    // Apply velocity
+                    particle.position.x += velocity.x * 0.01;
+                    particle.position.y += velocity.y * 0.01;
+                    particle.position.z += velocity.z * 0.01;
+
+                    // Add gravity effect
+                    velocity.y -= 0.05;
+
+                    // Scale down and fade out
+                    const particleLife = normalizedTime / particle.userData.lifetime;
+                    if (particleLife < 1.0) {
+                        particle.scale.set(1 - particleLife, 1 - particleLife, 1 - particleLife);
+                        particle.material.opacity = 0.8 * (1 - particleLife);
+                    } else {
+                        // Remove particle if its lifetime is over
+                        this.scene.remove(particle);
+                        particles[i] = null;
+                    }
+                }
+
+                // Filter out removed particles
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    if (particles[i] === null) {
+                        particles.splice(i, 1);
+                    }
+                }
+
+                // Update light intensity
+                light.intensity = 5 * (1 - normalizedTime);
+
+                requestAnimationFrame(animate);
+            } else {
+                // Cleanup any remaining particles
+                for (const particle of particles) {
+                    if (particle) this.scene.remove(particle);
+                }
+
+                // Remove light
+                this.scene.remove(light);
+            }
+        };
+
+        // Start animation
+        requestAnimationFrame(animate);
     }
 
     // Debug visualization
@@ -653,5 +746,207 @@ export class Enemy {
             this.scene.remove(marker);
         }
         this.debugMarkers = [];
+    }
+
+    // New method to try movement with wall sliding
+    tryMoveWithWallSlide(dx, dz, obstacles) {
+        // Update position
+        this.mesh.position.x += dx;
+        this.mesh.position.z += dz;
+
+        // Check for collisions
+        if (obstacles && this.checkObstacleCollisions(obstacles)) {
+            // Collision detected, revert the move
+            this.mesh.position.x -= dx;
+            this.mesh.position.z -= dz;
+
+            // Try to slide along the wall instead
+            if (Math.abs(dx) > 0.001) {
+                // We were moving on X axis, try Z slide
+                this.wallSlideDirection = 'z';
+
+                // Try sliding up or down Z axis
+                for (const zMult of [0.8, -0.8, 1.2, -1.2]) {
+                    this.mesh.position.z += Math.abs(dx) * zMult;
+                    if (!this.checkObstacleCollisions(obstacles)) {
+                        // Successfully slid along wall
+                        return false;
+                    }
+                    // Didn't work, revert
+                    this.mesh.position.z -= Math.abs(dx) * zMult;
+                }
+            }
+
+            if (Math.abs(dz) > 0.001) {
+                // We were moving on Z axis, try X slide
+                this.wallSlideDirection = 'x';
+
+                // Try sliding left or right on X axis
+                for (const xMult of [0.8, -0.8, 1.2, -1.2]) {
+                    this.mesh.position.x += Math.abs(dz) * xMult;
+                    if (!this.checkObstacleCollisions(obstacles)) {
+                        // Successfully slid along wall
+                        return false;
+                    }
+                    // Didn't work, revert
+                    this.mesh.position.x -= Math.abs(dz) * xMult;
+                }
+            }
+
+            // Sliding failed, we're stuck against this wall
+            return true;
+        }
+
+        // No collision
+        return false;
+    }
+
+    // Method to attempt escaping from a corner
+    attemptCornerEscape(obstacles) {
+        // If stuck in a corner, try more drastic moves in various directions
+        const escapeDirections = [
+            { x: 1, z: 0 },
+            { x: -1, z: 0 },
+            { x: 0, z: 1 },
+            { x: 0, z: -1 },
+            { x: 0.7, z: 0.7 },
+            { x: -0.7, z: 0.7 },
+            { x: 0.7, z: -0.7 },
+            { x: -0.7, z: -0.7 }
+        ];
+
+        // Shuffle escape directions for randomness
+        escapeDirections.sort(() => Math.random() - 0.5);
+
+        // Try each direction with a larger step
+        for (const dir of escapeDirections) {
+            const originalPos = this.mesh.position.clone();
+
+            // Try a larger movement in this direction
+            this.mesh.position.x += dir.x * 1.5;
+            this.mesh.position.z += dir.z * 1.5;
+
+            if (!this.checkObstacleCollisions(obstacles)) {
+                // We escaped!
+                if (this.debugMode) {
+                    console.log("Corner escape successful!");
+                }
+                return true;
+            }
+
+            // Return to original position and try next direction
+            this.mesh.position.copy(originalPos);
+        }
+
+        // Could not escape by normal means
+        return false;
+    }
+
+    // Last resort teleport for enemies that can't escape
+    emergencyUnstuck(obstacles, playerPosition) {
+        // This is only used when an enemy is stuck for a very long time
+        if (this.lastKnownPlayerPosition) {
+            // Get direction to player's last known position
+            const dirToPlayer = new THREE.Vector3().subVectors(
+                this.lastKnownPlayerPosition, this.mesh.position
+            ).normalize();
+
+            // Try to find a position further ahead in the general direction of the player
+            const attempts = 10;
+            let success = false;
+
+            for (let i = 0; i < attempts; i++) {
+                // Random distance between 3 and 8 units ahead
+                const distance = 3 + Math.random() * 5;
+
+                // Add some randomness to the direction
+                const jitterDir = dirToPlayer.clone();
+                jitterDir.x += (Math.random() - 0.5) * 0.5;
+                jitterDir.z += (Math.random() - 0.5) * 0.5;
+                jitterDir.normalize();
+
+                // Calculate new position
+                const newPos = this.mesh.position.clone().add(
+                    jitterDir.multiplyScalar(distance)
+                );
+
+                // Save current position
+                const originalPos = this.mesh.position.clone();
+
+                // Try the new position
+                this.mesh.position.copy(newPos);
+
+                if (!this.checkObstacleCollisions(obstacles)) {
+                    // Valid position found!
+                    success = true;
+                    break;
+                }
+
+                // Revert position
+                this.mesh.position.copy(originalPos);
+            }
+
+            if (success) {
+                // Reset pathfinding after teleport
+                this.pathfindingMode = 'direct';
+                this.isStuck = false;
+                this.stuckTime = 0;
+                this.severelyStuckTime = 0;
+                this.wallHitCount = 0;
+
+                // Create a visual effect for the teleport
+                this.createTeleportEffect();
+
+                if (this.debugMode) {
+                    console.log("Emergency teleport successful!");
+                }
+            }
+        }
+    }
+
+    createTeleportEffect() {
+        // Create a visual effect for teleportation
+        const particleGeometry = new THREE.SphereGeometry(0.1, 8, 8);
+        const particleMaterial = new THREE.MeshBasicMaterial({
+            color: 0xff0000,
+            transparent: true,
+            opacity: 0.8
+        });
+
+        // Create several particles
+        for (let i = 0; i < 10; i++) {
+            const particle = new THREE.Mesh(particleGeometry, particleMaterial);
+            particle.position.copy(this.mesh.position);
+
+            // Random offset
+            particle.position.x += (Math.random() - 0.5) * 1.0;
+            particle.position.y += Math.random() * 2;
+            particle.position.z += (Math.random() - 0.5) * 1.0;
+
+            this.scene.add(particle);
+
+            // Animate and remove particle
+            const startTime = Date.now();
+            const lifetime = 500 + Math.random() * 500;
+
+            const animate = () => {
+                const elapsed = Date.now() - startTime;
+                if (elapsed < lifetime) {
+                    // Scale down and fade out
+                    const progress = elapsed / lifetime;
+                    particle.scale.set(1 - progress, 1 - progress, 1 - progress);
+                    particle.material.opacity = 0.8 * (1 - progress);
+
+                    // Continue animation
+                    requestAnimationFrame(animate);
+                } else {
+                    // Remove particle
+                    this.scene.remove(particle);
+                }
+            };
+
+            // Start animation
+            requestAnimationFrame(animate);
+        }
     }
 } 
