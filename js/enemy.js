@@ -1,5 +1,6 @@
 export class Enemy {
     constructor(position, scene) {
+        console.log('Creating new enemy:', position);
         this.scene = scene;
         this.speed = 2.0;
         this.health = 100;
@@ -20,6 +21,7 @@ export class Enemy {
 
         // Add mesh to scene
         scene.add(this.mesh);
+        console.log('Enemy added to scene');
 
         // Movement properties
         this.moveDirection = new THREE.Vector3();

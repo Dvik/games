@@ -34,6 +34,7 @@ const restartButton = document.getElementById('restart-button');
 
 // Initialize the game
 function init() {
+    console.log('Initializing game...');
     // Create scene
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x87ceeb); // Sky blue background
@@ -74,6 +75,7 @@ function init() {
     document.addEventListener('keydown', onKeyDown);
     document.addEventListener('keyup', onKeyUp);
     document.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('pointerlockchange', onPointerLockChange);
 
     // Setup UI event listeners
     startButton.addEventListener('click', startGame);
@@ -84,6 +86,8 @@ function init() {
 
     // Start animation loop
     animate();
+
+    console.log('Game initialized, ready to spawn enemies on game start');
 }
 
 // Enhance the HUD with damage flash effect and better health visualization
@@ -127,10 +131,9 @@ function enhanceHUD() {
     healthValueBar.style.width = '100%';
 }
 
-// Function to start the game
+// Start the game
 function startGame() {
-    startScreen.classList.add('hidden');
-    hudElement.style.display = 'block';
+    // Reset game state
     state.playing = true;
     state.health = 100;
     state.ammo = 30;
@@ -138,25 +141,51 @@ function startGame() {
     state.damageCooldown = false;
     state.damageFlashTime = 0;
 
-    // Reset player position
-    camera.position.set(0, 1.6, 0);
+    // Hide start screen and show HUD
+    startScreen.classList.add('hidden');
+    hudElement.style.display = 'block';
+
+    // Lock pointer and enable controls
+    controls.lock();
 
     // Clear any existing enemies
-    state.enemies.forEach(enemy => scene.remove(enemy.mesh));
+    state.enemies.forEach(enemy => {
+        scene.remove(enemy.mesh);
+    });
     state.enemies = [];
 
     // Spawn initial enemies
     spawnEnemies(5);
-
-    // Update the HUD
-    updateHUD();
-
-    // Lock pointer for first-person controls
-    controls.lock();
 }
 
-// Function to restart the game after game over
+// Handle pointer lock change event
+function onPointerLockChange() {
+    if (document.pointerLockElement === renderer.domElement) {
+        // Pointer is locked, game is active
+        state.playing = true;
+    } else if (state.playing) {
+        // Pointer is unlocked but game was active, show pause message
+        const pauseMessage = document.createElement('div');
+        pauseMessage.className = 'controls-message';
+        pauseMessage.style.position = 'absolute';
+        pauseMessage.style.top = '50%';
+        pauseMessage.style.left = '50%';
+        pauseMessage.style.transform = 'translate(-50%, -50%)';
+        pauseMessage.style.color = 'white';
+        pauseMessage.style.fontSize = '24px';
+        pauseMessage.style.fontWeight = 'bold';
+        pauseMessage.style.textAlign = 'center';
+        pauseMessage.style.textShadow = '2px 2px 4px black';
+        pauseMessage.textContent = 'Game Paused\nClick to resume';
+        hudElement.appendChild(pauseMessage);
+    }
+}
+
+// Restart the game
 function restartGame() {
+    state.health = 100;
+    state.ammo = 30;
+    state.score = 0;
     gameOverScreen.classList.add('hidden');
     startGame();
 }
@@ -340,6 +369,8 @@ function showReloadConfirmation() {
 
 // Spawn enemies at random positions
 function spawnEnemies(count) {
+    console.log(`Attempting to spawn ${count} enemies`);
+
     for (let i = 0; i < count; i++) {
         // Find a position that doesn't collide with existing enemies or obstacles
         let validPosition = false;
@@ -416,6 +447,7 @@ function spawnEnemies(count) {
 
         // If we couldn't find a valid position after max attempts, use a fallback position
         if (!validPosition) {
+            console.log(`Could not find valid position after ${attempts} attempts, using fallback position`);
             // Use a safe fallback position - randomly select one of several predefined spawn points
             const spawnPoints = [
                 { x: 15, z: 15 },
@@ -462,8 +494,14 @@ function spawnEnemies(count) {
         }
 
         // Create enemy at valid position
-        const enemy = new Enemy(new THREE.Vector3(x, 0, z), scene);
-        state.enemies.push(enemy);
+        try {
+            console.log(`Creating enemy at position x:${x}, z:${z}`);
+            const enemy = new Enemy(new THREE.Vector3(x, 0, z), scene);
+            state.enemies.push(enemy);
+            console.log(`Enemy created successfully, total enemies: ${state.enemies.length}`);
+        } catch (error) {
+            console.error('Error creating enemy:', error);
+        }
     }
 }
 
@@ -484,11 +522,13 @@ function checkEnemyHits() {
 
     // Check for enemy hits
     const enemyMeshes = state.enemies.map(enemy => enemy.mesh);
+    console.log(`Checking for enemy hits. Current enemies: ${state.enemies.length}`);
     const enemyIntersects = raycaster.intersectObjects(enemyMeshes);
 
     if (enemyIntersects.length > 0) {
         const hitEnemy = state.enemies.find(enemy => enemy.mesh === enemyIntersects[0].object);
         if (hitEnemy) {
+            console.log('Enemy hit!');
             // Apply damage to enemy - return value is true if enemy is killed
             const isKilled = hitEnemy.takeDamage(state.playerDamage);
 
@@ -497,20 +537,46 @@ function checkEnemyHits() {
 
             // Only remove enemy if it's killed
             if (isKilled) {
+                console.log('Enemy killed!');
+                // Calculate distance between player and enemy
+                const playerPosition = camera.position.clone();
+                const enemyPosition = hitEnemy.mesh.position.clone();
+                const distance = playerPosition.distanceTo(enemyPosition);
+
+                // Calculate score based on distance
+                // Base score: 10 points
+                // Distance bonus: More points for greater distances
+                let scoreValue = 10;
+
+                if (distance > 10) {
+                    // Additional points for distance (max 40 points at 25+ meters)
+                    const distanceBonus = Math.min(40, Math.ceil(distance * 1.6));
+                    scoreValue += distanceBonus;
+
+                    // Show distance and bonus score message
+                    showDistanceKillMessage(Math.floor(distance), distanceBonus);
+                } else {
+                    // Just show regular kill message for close kills
+                    showKillMessage(scoreValue);
+                }
+
+                // Add to total score
+                state.score += scoreValue;
+                console.log(`Score updated: ${state.score}`);
+
+                // Update score display
+                updateHUD();
+
                 // Remove enemy from scene
                 scene.remove(hitEnemy.mesh);
 
                 // Remove enemy from array
                 const index = state.enemies.indexOf(hitEnemy);
                 state.enemies.splice(index, 1);
-
-                // Increase score
-                state.score += 10;
-
-                // Display kill message
-                showKillMessage();
+                console.log(`Enemy removed. Remaining enemies: ${state.enemies.length}`);
 
                 // Spawn new enemy after a short delay
+                console.log('Scheduling new enemy spawn in 2 seconds');
                 setTimeout(() => {
                     spawnEnemies(1);
                 }, 2000);
@@ -520,20 +586,37 @@ function checkEnemyHits() {
 }
 
 // Show kill message
-function showKillMessage() {
+function showKillMessage(points) {
     // Create and show a temporary "Enemy Killed" message
     const killMessage = document.createElement('div');
     killMessage.style.position = 'absolute';
     killMessage.style.top = '30%';
     killMessage.style.left = '50%';
     killMessage.style.transform = 'translate(-50%, -50%)';
-    killMessage.style.color = 'red';
-    killMessage.style.fontWeight = 'bold';
-    killMessage.style.fontSize = '24px';
-    killMessage.style.textShadow = '2px 2px 4px black';
+    killMessage.style.display = 'flex';
+    killMessage.style.flexDirection = 'column';
+    killMessage.style.alignItems = 'center';
     killMessage.style.opacity = '1';
     killMessage.style.transition = 'opacity 0.5s ease-out';
-    killMessage.textContent = 'Enemy Killed!';
+
+    // Message text
+    const messageText = document.createElement('div');
+    messageText.style.color = 'red';
+    messageText.style.fontWeight = 'bold';
+    messageText.style.fontSize = '24px';
+    messageText.style.textShadow = '2px 2px 4px black';
+    messageText.textContent = 'Enemy Killed!';
+    killMessage.appendChild(messageText);
+
+    // Points text
+    const pointsText = document.createElement('div');
+    pointsText.style.color = '#00ffcc';
+    pointsText.style.fontWeight = 'bold';
+    pointsText.style.fontSize = '18px';
+    pointsText.style.textShadow = '1px 1px 3px black';
+    pointsText.textContent = `+${points} points!`;
+    killMessage.appendChild(pointsText);
+
     hudElement.appendChild(killMessage);
 
     // Fade out and remove the message
@@ -545,6 +628,59 @@ function showKillMessage() {
             }
         }, 500);
     }, 1000);
+}
+
+// Show distance kill message with bonus
+function showDistanceKillMessage(distance, bonus) {
+    // Create message container
+    const messageContainer = document.createElement('div');
+    messageContainer.style.position = 'absolute';
+    messageContainer.style.top = '30%';
+    messageContainer.style.left = '50%';
+    messageContainer.style.transform = 'translate(-50%, -50%)';
+    messageContainer.style.display = 'flex';
+    messageContainer.style.flexDirection = 'column';
+    messageContainer.style.alignItems = 'center';
+    messageContainer.style.opacity = '1';
+    messageContainer.style.transition = 'opacity 0.5s ease-out';
+    hudElement.appendChild(messageContainer);
+
+    // Create kill message
+    const killMessage = document.createElement('div');
+    killMessage.style.color = 'red';
+    killMessage.style.fontWeight = 'bold';
+    killMessage.style.fontSize = '24px';
+    killMessage.style.textShadow = '2px 2px 4px black';
+    killMessage.textContent = 'Enemy Killed!';
+    messageContainer.appendChild(killMessage);
+
+    // Create distance message
+    const distanceMessage = document.createElement('div');
+    distanceMessage.style.color = '#ffcc00';
+    distanceMessage.style.fontWeight = 'bold';
+    distanceMessage.style.fontSize = '20px';
+    distanceMessage.style.textShadow = '1px 1px 3px black';
+    distanceMessage.textContent = `Long Shot: ${distance}m`;
+    messageContainer.appendChild(distanceMessage);
+
+    // Create bonus message
+    const bonusMessage = document.createElement('div');
+    bonusMessage.style.color = '#00ffcc';
+    bonusMessage.style.fontWeight = 'bold';
+    bonusMessage.style.fontSize = '18px';
+    bonusMessage.style.textShadow = '1px 1px 3px black';
+    bonusMessage.textContent = `+${bonus} points!`;
+    messageContainer.appendChild(bonusMessage);
+
+    // Fade out and remove the message
+    setTimeout(() => {
+        messageContainer.style.opacity = '0';
+        setTimeout(() => {
+            if (messageContainer.parentNode) {
+                messageContainer.parentNode.removeChild(messageContainer);
+            }
+        }, 500);
+    }, 1500);
 }
 
 // Take damage from enemy
@@ -604,6 +740,12 @@ function updateHUD() {
 
     // Update ammo count
     ammoCount.textContent = state.ammo;
+
+    // Update score display
+    const scoreValue = document.getElementById('score-value');
+    if (scoreValue) {
+        scoreValue.textContent = state.score;
+    }
 
     // If ammo is low, change color to yellow
     if (state.ammo <= 5 && state.ammo > 0) {

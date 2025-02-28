@@ -26,6 +26,21 @@ body, html {
     display: none; /* Hidden initially, shown when game starts */
 }
 
+#score-display {
+    position: absolute;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 5px 15px;
+    background-color: rgba(0, 0, 0, 0.5);
+    color: white;
+    border: 2px solid white;
+    font-size: 1.2rem;
+    font-weight: bold;
+    border-radius: 10px;
+    text-shadow: 1px 1px 2px black;
+}
+
 #health-bar {
     position: absolute;
     bottom: 20px;
